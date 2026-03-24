@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../main.dart';  // ⭐ Medicine 클래스 가져오기
+import '../main.dart';
+import '../service/notification_service.dart';  // ⭐ Medicine 클래스 가져오기
 
 class AddMedicineScreen extends StatefulWidget {
   const AddMedicineScreen({super.key});
@@ -11,7 +12,7 @@ class AddMedicineScreen extends StatefulWidget {
 class _AddMedicineScreenState extends State<AddMedicineScreen> {
   final _nameController = TextEditingController();
   TimeOfDay _selectedTime = TimeOfDay.now();
-  List<bool> _selectedDays = List.filled(7, true); // 월~일
+  List<bool> _selectedDays = List.filled(7, true);
 
   Future<void> _selectTime() async {
     final TimeOfDay? picked = await showTimePicker(
@@ -19,16 +20,16 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       initialTime: _selectedTime,
       builder: (context, child) {
         return MediaQuery(
-            data: MediaQuery.of(context).copyWith(
-          alwaysUse24HourFormat: true, // ⭐ 24시간제!
-        ),
-        child: Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: ColorScheme.light(
-              primary: Colors.green,
-            ),
+          data: MediaQuery.of(context).copyWith(
+            alwaysUse24HourFormat: true, // ⭐ 24시간제!
           ),
-          child: child!,
+          child: Theme(
+            data: Theme.of(context).copyWith(
+              colorScheme: ColorScheme.light(
+                primary: Colors.green,
+              ),
+            ),
+            child: child!,
           ),
         );
       },
@@ -182,7 +183,9 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     );
   }
 
-  void _saveMedicine() {
+  // add_medicine_screen.dart 파일의 _saveMedicine 수정
+
+  Future<void> _saveMedicine() async {
     if (_nameController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('약 이름을 입력해주세요')),
@@ -190,22 +193,24 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       return;
     }
 
-    // 여기서 약 저장 (나중에 구현)
+    // ⭐ 선택된 요일 추출
+    List<int> selectedDayIndices = [];
+    for (int i = 0; i < 7; i++) {
+      if (_selectedDays[i]) {
+        selectedDayIndices.add(i);
+      }
+    }
+
+    // ⭐ Medicine 객체 생성
     final medicine = Medicine(
       name: _nameController.text,
       alarmTime: _selectedTime,
+      selectedDays: selectedDayIndices,
     );
 
-    // TODO: 실제 저장 로직
-
+    // ⭐ 화면 닫고 데이터 전달 (알람은 main.dart에서 예약!)
+    if (!mounted) return;
     Navigator.pop(context, medicine);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${_nameController.text} 등록 완료!'),
-        backgroundColor: Colors.green,
-      ),
-    );
   }
 
   @override

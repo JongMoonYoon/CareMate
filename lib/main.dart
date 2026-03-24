@@ -7,42 +7,48 @@ import 'screens/add_medicine_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'service/notification_service.dart';
 
 const String serverUrl = 'https://ornamented-jeramy-achromatically.ngrok-free.app';
 const String userId = 'user_001';
 
-void main() => runApp(MaterialApp(  // ⭐ const 제거!
-  home: const PlantCareApp(),
-  debugShowCheckedModeBanner: false,
+void main() async {
+  // 1. Flutter 엔진 초기화 및 알람 서비스 시작
+  WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.initialize();
 
-  // ⭐ 전역 테마 설정
-  theme: ThemeData(
-    textTheme: const TextTheme(
-      displayLarge: TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
-      displayMedium: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-      displaySmall: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-      headlineMedium: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-      headlineSmall: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-      titleLarge: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-      bodyLarge: TextStyle(fontSize: 18),
-      bodyMedium: TextStyle(fontSize: 16),
-      labelLarge: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-    ),
-    elevatedButtonTheme: ElevatedButtonThemeData(
-      style: ElevatedButton.styleFrom(
-        textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 24),
+  runApp(MaterialApp( // ⭐ const 제거!
+    home: const PlantCareApp(),
+    debugShowCheckedModeBanner: false,
+
+    theme: ThemeData(
+      textTheme: const TextTheme(
+        displayLarge: TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
+        displayMedium: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
+        displaySmall: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+        headlineMedium: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        headlineSmall: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+        titleLarge: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        bodyLarge: TextStyle(fontSize: 18),
+        bodyMedium: TextStyle(fontSize: 16),
+        labelLarge: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 24),
+        ),
+      ),
+      appBarTheme: const AppBarTheme(
+        titleTextStyle: TextStyle(
+          fontSize: 22,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
       ),
     ),
-    appBarTheme: const AppBarTheme(
-      titleTextStyle: TextStyle(
-        fontSize: 22,
-        fontWeight: FontWeight.bold,
-        color: Colors.white,
-      ),
-    ),
-  ),
-));
+  ));
+}
 
 // 전역 약 리스트
 class GlobalMedicineList {
@@ -61,6 +67,7 @@ class GlobalMedicineList {
       'minute': m.alarmTime.minute,
       'beaconId': m.beaconId,
       'isTaken': m.isTaken,
+      'selectedDays': m.selectedDays,
     }).toList();
 
     await prefs.setString('medicines', jsonEncode(jsonList));
@@ -83,6 +90,9 @@ class GlobalMedicineList {
           minute: json['minute'],
         ),
         beaconId: json['beaconId'] ?? '',
+        selectedDays: json['selectedDays'] != null
+            ? List<int>.from(json['selectedDays'])
+            : [0, 1, 2, 3, 4, 5, 6],
         isTaken: json['isTaken'] ?? false,
       )).toList();
     }
@@ -119,12 +129,14 @@ class MedicationManager extends ChangeNotifier {
 class Medicine {
   final String name;
   final TimeOfDay alarmTime;
+  final List<int> selectedDays;
   final String beaconId;
   bool isTaken;
 
   Medicine({
     required this.name,
     required this.alarmTime,
+    this.selectedDays = const [0, 1, 2, 3, 4, 5, 6],
     this.beaconId = "",
     this.isTaken = false,
   });
@@ -191,6 +203,10 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadMedicines();
+    // NotificationService.cancelAllAlarms();
+    // NotificationService.showTestNotification();
+
+
   }
 
   Future<void> _loadMedicines() async {
@@ -328,61 +344,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 20),
 
-            // 복약 현황 카드
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 20),
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.shade300,
-                    blurRadius: 10,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.calendar_today, color: Colors.green.shade700),
-                      const SizedBox(width: 10),
-                      const Text('오늘의 복약 현황'),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _buildStatusCard(
-                        '오늘 복약',
-                        '$todayMedicine회',
-                        Icons.medication,
-                        Colors.blue,
-                      ),
-                      _buildStatusCard(
-                        '총 복약',
-                        '$totalMedicine회',
-                        Icons.favorite,
-                        Colors.red,
-                      ),
-                      _buildStatusCard(
-                        '연속 일수',
-                        '7일',
-                        Icons.local_fire_department,
-                        Colors.orange,
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
             // 약 등록 버튼
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -399,9 +360,37 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (result != null && result is Medicine) {
                     setState(() {
                       GlobalMedicineList.medicines.add(result);
-                      GlobalMedicineList.medicines = GlobalMedicineList.medicines;
                     });
                     await GlobalMedicineList.save();
+
+                    // ⭐ 알람 예약 (try-catch 추가)
+                    try {
+                      await NotificationService.scheduleMedicineAlarm(
+                        id: result.name.hashCode.abs().remainder(10000),
+                        medicineName: result.name,  // ⭐ 약 이름 전달!
+                        time: result.alarmTime,
+                        selectedDays: result.selectedDays,
+                      );
+
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('✅ ${result.name} 알람이 설정되었습니다!'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      print('❌ 알람 예약 실패: $e');
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('⚠️ 알람 설정 실패: $e'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
+                    }
                   }
                 },
                 style: ElevatedButton.styleFrom(
