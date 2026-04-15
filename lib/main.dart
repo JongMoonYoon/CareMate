@@ -203,6 +203,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadMedicines();
+    _cleanupOldRecords();
     // NotificationService.cancelAllAlarms();
     // NotificationService.showTestNotification();
 
@@ -219,6 +220,37 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _cleanupOldRecords() async {
+    await GlobalMedicineList.load();
+
+    // 등록된 약 이름 목록
+    final registeredMedicines = GlobalMedicineList.medicines
+        .map((med) => med.name)
+        .toSet();
+
+    // 복약 기록 정리
+    final initialCount = GlobalMedicineList.history.length;
+
+    GlobalMedicineList.history.removeWhere((record) {
+      final parts = record.split('|');
+      final medicineName = parts[0];
+
+      // 등록되지 않은 약이면 제거
+      if (!registeredMedicines.contains(medicineName)) {
+        print('🗑️ 미등록 약 기록 삭제: $medicineName');
+        return true;
+      }
+      return false;
+    });
+
+    final removedCount = initialCount - GlobalMedicineList.history.length;
+
+    if (removedCount > 0) {
+      await GlobalMedicineList.save();
+      print('✅ 복약 기록 정리 완료! ($removedCount개 삭제)');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     int plantLevel = GlobalMedicineList.plantLevel;
@@ -228,7 +260,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: Colors.green.shade50,
       appBar: AppBar(
-        title: const Text('내 반려 식물'),
+        title: const Text('하루약속'),
         backgroundColor: Colors.green,
         elevation: 0,
       ),
@@ -328,11 +360,54 @@ class _HomeScreenState extends State<HomeScreen> {
                           IconButton(
                             icon: const Icon(Icons.delete, color: Colors.red),
                             onPressed: () async {
-                              setState(() {
-                                GlobalMedicineList.medicines.remove(med);
-                                GlobalMedicineList.medicines = GlobalMedicineList.medicines;
-                              });
-                              await GlobalMedicineList.save();
+                              // ⭐ 확인 다이얼로그
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('약 삭제'),
+                                  content: Text('${med.name}을(를) 삭제하시겠습니까?\n복약 기록도 함께 삭제됩니다.'),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context, false),
+                                      child: const Text('취소'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context, true),
+                                      style: TextButton.styleFrom(foregroundColor: Colors.red),
+                                      child: const Text('삭제'),
+                                    ),
+                                  ],
+                                ),
+                              );
+
+                              if (confirm == true) {
+                                // ⭐ 해당 약의 복약 기록 삭제
+                                GlobalMedicineList.history.removeWhere((record) {
+                                  final parts = record.split('|');
+                                  return parts[0] == med.name;
+                                });
+
+                                // ⭐ 알람 취소
+                                await NotificationService.cancelAlarm(
+                                  med.name.hashCode.abs().remainder(10000),
+                                );
+
+                                // ⭐ 약 삭제
+                                setState(() {
+                                  GlobalMedicineList.medicines.remove(med);
+                                });
+
+                                await GlobalMedicineList.save();
+
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('${med.name} 삭제 완료!'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                }
+                              }
                             },
                           ),
                         ],
@@ -357,38 +432,63 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   );
 
-                  if (result != null && result is Medicine) {
-                    setState(() {
-                      GlobalMedicineList.medicines.add(result);
-                    });
-                    await GlobalMedicineList.save();
+                  if (result != null) {
+                    // ⭐ List<Medicine> 처리
+                    if (result is List<Medicine>) {
+                      for (var medicine in result) {
+                        setState(() {
+                          GlobalMedicineList.medicines.add(medicine);
+                        });
 
-                    // ⭐ 알람 예약 (try-catch 추가)
-                    try {
-                      await NotificationService.scheduleMedicineAlarm(
-                        id: result.name.hashCode.abs().remainder(10000),
-                        medicineName: result.name,  // ⭐ 약 이름 전달!
-                        time: result.alarmTime,
-                        selectedDays: result.selectedDays,
-                      );
+                        // 각각 알람 예약
+                        try {
+                          await NotificationService.scheduleMedicineAlarm(
+                            id: medicine.name.hashCode.abs().remainder(10000),
+                            medicineName: medicine.name,
+                            time: medicine.alarmTime,
+                            selectedDays: medicine.selectedDays,
+                          );
+                        } catch (e) {
+                          print('❌ 알람 예약 실패: $e');
+                        }
+                      }
+
+                      await GlobalMedicineList.save();
 
                       if (mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text('✅ ${result.name} 알람이 설정되었습니다!'),
+                            content: Text('✅ ${result.length}개 약이 등록되었습니다!'),
                             backgroundColor: Colors.green,
                           ),
                         );
                       }
-                    } catch (e) {
-                      print('❌ 알람 예약 실패: $e');
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('⚠️ 알람 설정 실패: $e'),
-                            backgroundColor: Colors.red,
-                          ),
+                    }
+                    // ⭐ 단일 Medicine 처리 (하위 호환성)
+                    else if (result is Medicine) {
+                      setState(() {
+                        GlobalMedicineList.medicines.add(result);
+                      });
+                      await GlobalMedicineList.save();
+
+                      try {
+                        await NotificationService.scheduleMedicineAlarm(
+                          id: result.name.hashCode.abs().remainder(10000),
+                          medicineName: result.name,
+                          time: result.alarmTime,
+                          selectedDays: result.selectedDays,
                         );
+
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('✅ ${result.name} 알람이 설정되었습니다!'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        }
+                      } catch (e) {
+                        print('❌ 알람 예약 실패: $e');
                       }
                     }
                   }

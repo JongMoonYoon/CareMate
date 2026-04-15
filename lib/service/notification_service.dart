@@ -58,7 +58,7 @@ class NotificationService {
           dateTime: scheduledDate,
           assetAudioPath: 'assets/blank.mp3',  // ⚠️ 무음 파일 필요
           loopAudio: false,
-          vibrate: false,  // 진동 끄기
+          vibrate: true,  // 진동 끄기
           volumeSettings: const VolumeSettings.fixed(
             volume: 0.0,
             volumeEnforced: true,

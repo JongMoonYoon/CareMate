@@ -40,6 +40,16 @@ dependencies:
   #android_alarm_manager_plus: ^4.0.3
   alarm: ^5.2.1
 
+  image_picker: ^1.0.7
+  image: ^4.1.3
+
+  # OCR (Google ML Kit)
+  google_mlkit_text_recognition: ^0.13.0
+  flutter_tesseract_ocr: ^0.4.11
+  flutter_blue_plus: ^1.31.0
+
+  # 권한 처리
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
@@ -71,6 +81,9 @@ flutter:
 
   assets:
     - assets/blank.mp3
+    - assets/tessdata/
+    - assets/tessdata/kor.traineddata
+    - assets/tessdata/tessdata_config.json
 
   # To add assets to your application, add an assets section, like this:
   # assets:
