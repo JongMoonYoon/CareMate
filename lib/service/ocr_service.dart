@@ -4,230 +4,69 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 
+const String _serverUrl = 'https://ornamented-jeramy-achromatically.ngrok-free.app';
+
 class OCRService {
   final ImagePicker _imagePicker = ImagePicker();
-
   static const String _ocrApiKey = 'K88624131688957';
 
   // ────────────────────────────────────────────────────────────────────────────
-  // ⭐ 한국 의약품 데이터베이스 (약품명 → 카테고리)
-  // 성분명(INN) + 주요 브랜드명 포함
+  // ⭐ 대괄호 카테고리 → 내부 약품 카테고리 매핑
+  // 사진에서 발견: [세팔로스포린계 항생제], [H2 차단제], [소화제] 등
   // ────────────────────────────────────────────────────────────────────────────
-  static const Map<String, String> _medicineDatabase = {
-    // ── 해열진통제 ──────────────────────────────────────────────────────────
-    '타이레놀': '해열진통제', '아세트아미노펜': '해열진통제',
-    '이부프로펜': '해열진통제', '애드빌': '해열진통제',
-    '부루펜': '해열진통제', '탁센': '해열진통제',
-    '낙센': '해열진통제', '나프록센': '해열진통제',
-    '세레브렉스': '소염진통제', '셀레콕시브': '소염진통제',
-    '디클로페낙': '소염진통제', '볼타렌': '소염진통제',
-    '멜록시캄': '소염진통제', '모빅': '소염진통제',
-    '케토프로펜': '소염진통제', '인도메타신': '소염진통제',
-    '트라마돌': '진통제', '울트람': '진통제',
-
-    // ── 감기약 ────────────────────────────────────────────────────────────
-    '판콜': '감기약', '판피린': '감기약', '콜대원': '감기약',
-    '화이투벤': '감기약', '테라플루': '감기약', '신코': '감기약',
-    '액티피드': '감기약', '감기몸살': '감기약',
-    '슈다페드': '감기약', '슈다페드에이': '감기약',
-    '페니라민': '감기약', '클로르페니라민': '감기약',
-    '덱스트로메토르판': '감기약', '구아이페네신': '감기약',
-
-    // ── 항생제 ────────────────────────────────────────────────────────────
-    '아목시실린': '항생제', '아목시클라브': '항생제',
-    '오구멘틴': '항생제', '세팔렉신': '항생제',
-    '독시사이클린': '항생제', '클래리스로마이신': '항생제',
-    '클래리시드': '항생제', '아지스로마이신': '항생제',
-    '지스로맥스': '항생제', '레보플록사신': '항생제',
-    '크라비트': '항생제', '시프로플록사신': '항생제',
-    '씨프로': '항생제', '메트로니다졸': '항생제',
-    '플래그실': '항생제', '세픽심': '항생제',
-    '세프트리악손': '항생제', '클린다마이신': '항생제',
-    '테트라사이클린': '항생제', '페니실린': '항생제',
-    '세파클러': '항생제', '세파드록실': '항생제',
-    '목시플록사신': '항생제', '아벨록스': '항생제',
-
-    // ── 혈압약 ────────────────────────────────────────────────────────────
-    '암로디핀': '혈압약', '노바스크': '혈압약',
-    '로사르탄': '혈압약', '코자': '혈압약',
-    '발사르탄': '혈압약', '디오반': '혈압약',
-    '텔미사르탄': '혈압약', '미카르디스': '혈압약',
-    '올메사르탄': '혈압약', '올메텍': '혈압약',
-    '칸데사르탄': '혈압약', '아타칸': '혈압약',
-    '이르베사르탄': '혈압약', '아프로벨': '혈압약',
-    '아테놀올': '혈압약', '메토프롤롤': '혈압약',
-    '베타락': '혈압약', '비소프롤롤': '혈압약',
-    '카르베딜롤': '혈압약', '코렉': '혈압약',
-    '히드로클로로티아지드': '혈압약', '인다파미드': '혈압약',
-    '페린도프릴': '혈압약', '에날라프릴': '혈압약',
-    '리시노프릴': '혈압약', '라미프릴': '혈압약',
-    '트리암테렌': '혈압약', '클로르탈리돈': '혈압약',
-    '독사조신': '혈압약', '카르두라': '혈압약',
-    '니페디핀': '혈압약', '아달라트': '혈압약',
-    '딜티아젬': '혈압약', '베라파밀': '혈압약',
-
-    // ── 당뇨약 ────────────────────────────────────────────────────────────
-    '메트포르민': '당뇨약', '글루코파지': '당뇨약',
-    '다이아벡스': '당뇨약', '글리메피리드': '당뇨약',
-    '아마릴': '당뇨약', '글리클라지드': '당뇨약',
-    '다이아미크롱': '당뇨약', '글리피지드': '당뇨약',
-    '시타글립틴': '당뇨약', '자누비아': '당뇨약',
-    '다파글리플로진': '당뇨약', '포시가': '당뇨약',
-    '엠파글리플로진': '당뇨약', '자디앙': '당뇨약',
-    '리나글립틴': '당뇨약', '트라젠타': '당뇨약',
-    '빌다글립틴': '당뇨약', '갈부스': '당뇨약',
-    '삭사글립틴': '당뇨약', '온글라이자': '당뇨약',
-    '피오글리타존': '당뇨약', '악토스': '당뇨약',
-    '알로글립틴': '당뇨약', '카나글리플로진': '당뇨약',
-    '인보카나': '당뇨약',
-
-    // ── 위장약 / 소화제 ────────────────────────────────────────────────────
-    '오메프라졸': '위장약', '로섹': '위장약',
-    '판토프라졸': '위장약', '판토록': '위장약',
-    '에소메프라졸': '위장약', '넥시움': '위장약',
-    '란소프라졸': '위장약', '프레바시드': '위장약',
-    '라베프라졸': '위장약', '파리에트': '위장약',
-    '라니티딘': '위장약', '잔탁': '위장약',
-    '파모티딘': '위장약', '가스터': '위장약',
-    '시메티딘': '위장약', '수크랄페이트': '위장약',
-    '알지오': '위장약', '알마겔': '위장약',
-    '돔페리돈': '소화제', '모티리움': '소화제',
-    '메토클로프라미드': '소화제', '맥페란': '소화제',
-    '트리메부틴': '소화제', '포리부틴': '소화제',
-    '시메티콘': '소화제', '가스활명수': '소화제',
-    '까스명수': '소화제', '베아제': '소화제',
-    '훼스탈': '소화제', '닥터베아제': '소화제',
-    '디아스타아제': '소화제',
-
-    // ── 콜레스테롤약 ────────────────────────────────────────────────────────
-    '아토르바스타틴': '콜레스테롤약', '리피토': '콜레스테롤약',
-    '로수바스타틴': '콜레스테롤약', '크레스토': '콜레스테롤약',
-    '심바스타틴': '콜레스테롤약', '조코': '콜레스테롤약',
-    '프라바스타틴': '콜레스테롤약', '메바로친': '콜레스테롤약',
-    '피타바스타틴': '콜레스테롤약', '리바로': '콜레스테롤약',
-    '플루바스타틴': '콜레스테롤약', '레스콜': '콜레스테롤약',
-    '에제티미브': '콜레스테롤약', '에제트롤': '콜레스테롤약',
-    '페노피브레이트': '콜레스테롤약', '트리코': '콜레스테롤약',
-
-    // ── 알레르기 / 항히스타민 ────────────────────────────────────────────────
-    '세티리진': '알레르기약', '지르텍': '알레르기약',
-    '로라타딘': '알레르기약', '클라리틴': '알레르기약',
-    '펙소페나딘': '알레르기약', '알레그라': '알레르기약',
-    '레보세티리진': '알레르기약', '씨잘': '알레르기약',
-    '에바스틴': '알레르기약', '에바스텔': '알레르기약',
-    '빌라스틴': '알레르기약', '오로팻': '알레르기약',
-    '아젤라스틴': '알레르기약', '올로파타딘': '알레르기약',
-    '디펜히드라민': '알레르기약', '베나드릴': '알레르기약',
-    '몬테루카스트': '알레르기약', '싱귤레어': '알레르기약',
-
-    // ── 비타민 / 영양제 ────────────────────────────────────────────────────
-    '비타민씨': '비타민', '비타민c': '비타민', '아스코르브산': '비타민',
-    '비타민d': '비타민', '비타민b': '비타민', '비타민b12': '비타민',
-    '엽산': '비타민', '티아민': '비타민', '리보플라빈': '비타민',
-    '나이아신': '비타민', '판토텐산': '비타민',
-    '철분': '철분제', '훼럼': '철분제', '페로바': '철분제',
-    '오메가3': '영양제', '글루코사민': '관절영양제',
-    '콘드로이틴': '관절영양제', '마그네슘': '영양제',
-    '칼슘': '칼슘제', '비타민d3': '비타민', '아연': '영양제',
-    '루테인': '영양제', '코엔자임q10': '영양제', '코큐텐': '영양제',
-
-    // ── 수면 / 안정제 ────────────────────────────────────────────────────
-    '졸피뎀': '수면제', '스틸녹스': '수면제',
-    '트리아졸람': '수면제', '할시온': '수면제',
-    '에스조피클론': '수면제', '루네스타': '수면제',
-    '알프라졸람': '안정제', '자낙스': '안정제',
-    '로라제팜': '안정제', '아티반': '안정제',
-    '클로나제팜': '안정제', '리보트릴': '안정제',
-    '디아제팜': '안정제', '발리움': '안정제',
-    '미다졸람': '안정제', '도르미컴': '안정제',
-    '부스피론': '안정제',
-
-    // ── 항우울 / 정신과 ───────────────────────────────────────────────────
-    '세르트랄린': '항우울제', '졸로푸트': '항우울제',
-    '에스시탈로프람': '항우울제', '렉사프로': '항우울제',
-    '시탈로프람': '항우울제', '파록세틴': '항우울제',
-    '세록사트': '항우울제', '플루옥세틴': '항우울제',
-    '프로작': '항우울제', '벤라팍신': '항우울제',
-    '이펙사': '항우울제', '미르타자핀': '항우울제',
-    '레메론': '항우울제', '부프로피온': '항우울제',
-    '웰부트린': '항우울제', '아미트리프틸린': '항우울제',
-    '트라조돈': '항우울제',
-
-    // ── 심장 / 혈전약 ────────────────────────────────────────────────────
-    '아스피린': '혈전약', '클로피도그렐': '혈전약',
-    '플라빅스': '혈전약', '와파린': '혈전약',
-    '쿠마딘': '혈전약', '리바록사반': '혈전약',
-    '자렐토': '혈전약', '아픽사반': '혈전약',
-    '엘리퀴스': '혈전약', '다비가트란': '혈전약',
-    '프라닥사': '혈전약', '니트로글리세린': '협심증약',
-    '이소소르비드': '협심증약', '디곡신': '심장약',
-    '란독신': '심장약',
-
-    // ── 갑상선 ────────────────────────────────────────────────────────────
-    '레보티록신': '갑상선약', '신지로이드': '갑상선약',
-    '씬지로이드': '갑상선약', '티록신': '갑상선약',
-    '메티마졸': '갑상선약', '안티로이드': '갑상선약',
-    '프로필티오우라실': '갑상선약',
-
-    // ── 골다공증 ────────────────────────────────────────────────────────
-    '알렌드로네이트': '골다공증약', '포사맥스': '골다공증약',
-    '리세드로네이트': '골다공증약', '악토넬': '골다공증약',
-    '이반드로네이트': '골다공증약', '보니바': '골다공증약',
-    '졸레드론산': '골다공증약', '데노수맙': '골다공증약',
-
-    // ── 천식 / 호흡기 ────────────────────────────────────────────────────
-    '살부타몰': '천식약', '벤톨린': '천식약',
-    '살메테롤': '천식약', '세레벤트': '천식약',
-    '부데소니드': '천식약', '풀미코트': '천식약',
-    '플루티카손': '천식약', '티오트로피움': '천식약',
-    '스피리바': '천식약', '포르모테롤': '천식약',
-    '암브록솔': '기관지약', '뮤코렉스': '기관지약',
-    '아세틸시스테인': '기관지약', '뮤테란': '기관지약',
-
-    // ── 관절 / 근육 ───────────────────────────────────────────────────────
-    '에토리콕시브': '관절약', '아콕시아': '관절약',
-    '로르노시캄': '관절약', '클로르족사존': '근이완제',
-    '바클로펜': '근이완제', '티자니딘': '근이완제',
-    '사이클로벤자프린': '근이완제', '근이완': '근이완제',
-
-    // ── 피부과 ────────────────────────────────────────────────────────────
-    '히드로코르티손': '피부약', '트레티노인': '피부약',
-    '클린다마이신겔': '피부약', '베나드릴크림': '피부약',
-    '뮤피로신': '피부약', '박트로반': '피부약',
-    '미코나졸': '피부약', '클로트리마졸': '피부약',
-    '라미실': '피부약', '테르비나핀': '피부약',
-
-    // ── 눈약 ─────────────────────────────────────────────────────────────
-    '히알루론산': '안약', '아트로핀': '안약',
-    '라타노프로스트': '안약', '잔탄': '안약',
-    '목시플록사신점안액': '안약', '올로파타딘점안액': '안약',
-    '도르졸아미드': '안약', '티몰롤': '안약',
-
-    // ── 신경과 ───────────────────────────────────────────────────────────
-    '가바펜틴': '신경통약', '뉴론틴': '신경통약',
-    '프레가발린': '신경통약', '리리카': '신경통약',
-    '카르바마제핀': '뇌전증약', '테그레톨': '뇌전증약',
-    '발프로산': '뇌전증약', '데파킨': '뇌전증약',
-    '레베티라세탐': '뇌전증약', '케프라': '뇌전증약',
-    '도네페질': '치매약', '아리셉트': '치매약',
-    '메만틴': '치매약', '에빅사': '치매약',
-
-    // ── 비뇨기과 ─────────────────────────────────────────────────────────
-    '탐스로신': '전립선약', '하루날': '전립선약',
-    '핀아스테라이드': '전립선약', '프로스카': '전립선약',
-    '두타스테라이드': '전립선약', '아보다트': '전립선약',
-    '실로도신': '전립선약', '날트렉손': '전립선약',
+  static const Map<String, String> _bracketCategoryMap = {
+    '항생': '항생제', '세팔로스포린': '항생제', '세균감염': '항생제',
+    '페니실린': '항생제', '퀴놀론': '항생제', '마크로라이드': '항생제',
+    'H2차단': '위장약', 'H2 차단': '위장약', '위산': '위장약',
+    '위장운동': '소화제', '소화성궤양': '위장약', '위점막': '위장약',
+    '소화': '소화제', '위장': '위장약', '역류': '위장약',
+    '소염진통': '소염진통제', '비스테로이드': '소염진통제', 'NSAIDs': '소염진통제',
+    '해열': '해열진통제', '진통': '해열진통제',
+    '진해거담': '기관지약', '기침': '기관지약', '거담': '기관지약',
+    '천식': '천식약', '알레르기': '알레르기약', '항히스타민': '알레르기약',
+    '혈압': '혈압약', '고혈압': '혈압약', '칼슘차단': '혈압약',
+    '당뇨': '당뇨약', '혈당': '당뇨약', '인슐린': '당뇨약',
+    '콜레스테롤': '콜레스테롤약', '고지혈': '콜레스테롤약', '스타틴': '콜레스테롤약',
+    '수면': '수면제', '진정': '안정제', '신경안정': '안정제',
+    '갑상선': '갑상선약', '비뇨': '전립선약', '전립선': '전립선약',
+    '근이완': '근이완제', '관절': '관절약', '골다공증': '골다공증약',
+    '비타민': '비타민', '철분': '철분제', '영양': '영양제',
+    '항바이러스': '항바이러스제', '바이러스': '항바이러스제',
   };
 
   // ────────────────────────────────────────────────────────────────────────────
-  // 갤러리 / 카메라 스캔
+  // 제외 키워드
   // ────────────────────────────────────────────────────────────────────────────
+  static const List<String> _excludeKeywords = [
+    '계산서', '영수증', '약국', '약사', '조제일', '복약안내',
+    '원장', '조제료', '전화', '팩스', '사업자', '등록번호',
+    '병원', '의원', '진료', '보험', '급여', '비급여', '총액',
+    '본인부담', '공단부담', '실온보관', '냉장보관', '냉동보관',
+    '유효기간', '제조일', '보관방법', '복약지도',
+    '기계조작', '녹내장', '전문가에게', '위장장애',
+    '항생제와', '병용하기', '내성균', '장기간', '연용하지',
+    '황달', '간기능', '이상반응', '부작용', '주의사항',
+    '다음내방일', '조제약사', '환자정보', '교부번호', '병원정보',
+    '처방전교부번호', '처방전발행기관',
+  ];
 
+  static const List<String> _colorWords = [
+    '노랑', '노란', '노란색', '노랑색', '흰색', '백색', '하얀',
+    '갈색', '분홍', '파란', '빨간', '주황', '초록', '녹색',
+    '주홍', '황색', '연두', '하늘', '연노란', '미황색',
+    '장방형', '원형', '타원형', '육각형', '팔각형',
+  ];
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 갤러리 스캔
+  // ────────────────────────────────────────────────────────────────────────────
   Future<String> scanFromGallery() async {
     try {
       final XFile? image = await _imagePicker.pickImage(
         source: ImageSource.gallery,
-        maxWidth: 1920, maxHeight: 1920, imageQuality: 85,
+        maxWidth: 2048,
+        maxHeight: 2048,
+        imageQuality: 95,
       );
       if (image == null) return '';
       return await _recognizeText(File(image.path));
@@ -237,11 +76,16 @@ class OCRService {
     }
   }
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // 카메라 스캔
+  // ────────────────────────────────────────────────────────────────────────────
   Future<String> scanFromCamera() async {
     try {
       final XFile? photo = await _imagePicker.pickImage(
         source: ImageSource.camera,
-        maxWidth: 1920, maxHeight: 1920, imageQuality: 85,
+        maxWidth: 2048,
+        maxHeight: 2048,
+        imageQuality: 95,
       );
       if (photo == null) return '';
       return await _recognizeText(File(photo.path));
@@ -252,9 +96,8 @@ class OCRService {
   }
 
   // ────────────────────────────────────────────────────────────────────────────
-  // OCR.space API 텍스트 인식
+  // OCR.space API
   // ────────────────────────────────────────────────────────────────────────────
-
   Future<String> _recognizeText(File imageFile) async {
     try {
       if (!await imageFile.exists()) return '';
@@ -268,12 +111,21 @@ class OCRService {
           'base64Image': 'data:image/jpg;base64,$img64',
           'language': 'kor',
           'isOverlayRequired': 'false',
+          'detectOrientation': 'true',  // ⭐ 세로 사진 자동 보정
+          'scale': 'true',              // ⭐ 저해상도 스케일업
+          'OCREngine': '2',             // ⭐ 한국어 정확도 높음
+          'isTable': 'true',            // ⭐ 표 형식 인식 강화
         },
         headers: {'apikey': _ocrApiKey},
-      );
+      ).timeout(const Duration(seconds: 30));
 
       final result = jsonDecode(post.body);
-      final fullText = result['ParsedResults'][0]['ParsedText'] as String;
+      if (result['IsErroredOnProcessing'] == true) return '';
+
+      final parsedResults = result['ParsedResults'] as List?;
+      if (parsedResults == null || parsedResults.isEmpty) return '';
+
+      final fullText = parsedResults[0]['ParsedText'] as String? ?? '';
       print('=== OCR 원문 ===\n$fullText\n===============');
       return fullText;
     } catch (e) {
@@ -283,96 +135,323 @@ class OCRService {
   }
 
   // ────────────────────────────────────────────────────────────────────────────
-  // ⭐ 핵심: 약 정보 추출
+  // ⭐ 서버 DB 약품명 검색
   // ────────────────────────────────────────────────────────────────────────────
-
-  Map<String, dynamic> extractMedicineInfo(String ocrText) {
+  Future<Map<String, dynamic>?> _searchMedicineFromServer(String keyword) async {
     try {
-      // 1. 며칠치 추출
-      final supplyDays = _extractSupplyDays(ocrText);
+      if (keyword.length < 3) return null;
+      final uri = Uri.parse('$_serverUrl/medicine/search')
+          .replace(queryParameters: {'keyword': keyword});
+      final response = await http.get(
+        uri,
+        headers: {'ngrok-skip-browser-warning': 'true'},
+      ).timeout(const Duration(seconds: 5));
 
-      // 2. 약품명 라인 추출
-      final rawNames = _extractMedicineNames(ocrText);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        if (data['found'] == true && (data['medicines'] as List).isNotEmpty) {
+          print('✅ DB 매칭: "$keyword" → ${data['medicines'][0]['name']}');
+          return data['medicines'][0] as Map<String, dynamic>;
+        }
+      }
+    } catch (e) {
+      print('⚠️ 서버 검색 실패 ("$keyword"): $e');
+    }
+    return null;
+  }
 
-      // 3. DB 매칭 → 카테고리 집계
+  // ────────────────────────────────────────────────────────────────────────────
+  // ⭐ 약 정보 추출 메인 (서버 DB 연동)
+  // ────────────────────────────────────────────────────────────────────────────
+  Future<Map<String, dynamic>> extractMedicineInfoWithServer(String ocrText) async {
+    try {
+      final cleanedText = _preprocessText(ocrText);
+
+      final supplyDays = _extractSupplyDays(cleanedText);
+      final dailyCount = _extractDailyCount(cleanedText);
+      final rawNames = _extractMedicineNames(cleanedText);
+
+      // ⭐ 대괄호에서 카테고리 추출
+      final bracketCategory = _extractBracketCategory(cleanedText);
+
+      print('💊 OCR 추출 약품명: $rawNames');
+      print('🏷️ 대괄호 카테고리: $bracketCategory');
+
+      // 서버 DB 검색
+      final verifiedMedicines = <Map<String, dynamic>>[];
+      final verifiedNames = <String>[];
       final categoryTally = <String, int>{};
-      final matchedCategories = <String>[];
+
+      // 대괄호 카테고리 우선 반영
+      if (bracketCategory != null) {
+        categoryTally[bracketCategory] = (categoryTally[bracketCategory] ?? 0) + 3;
+      }
 
       for (final name in rawNames) {
-        final category = _lookupCategory(name);
-        if (category != null) {
-          matchedCategories.add(category);
-          categoryTally[category] = (categoryTally[category] ?? 0) + 1;
-        }
-      }
-
-      // 4. 가장 많이 나온 카테고리를 setName으로
-      String setName = '처방약';
-      if (categoryTally.isNotEmpty) {
-        // 빈도순 정렬 후 1위 카테고리 선택
-        final sorted = categoryTally.entries.toList()
-          ..sort((a, b) => b.value.compareTo(a.value));
-
-        if (sorted.length == 1) {
-          // 단일 카테고리
-          setName = sorted.first.key;
-        } else if (sorted[0].value > sorted[1].value) {
-          // 명확한 1위
-          setName = sorted.first.key;
+        final result = await _searchMedicineFromServer(name);
+        if (result != null) {
+          verifiedMedicines.add(result);
+          verifiedNames.add(result['name'] as String);
+          final desc = result['description'] as String? ?? '';
+          final category = _extractCategoryFromDesc(desc);
+          if (category != null) {
+            categoryTally[category] = (categoryTally[category] ?? 0) + 1;
+          }
         } else {
-          // 동률 → 두 카테고리 조합 (예: "항생제·소화제")
-          setName = '${sorted[0].key}·${sorted[1].key}';
+          verifiedNames.add(name);
         }
       }
 
-      // 5. 복용 횟수 추출 (1일 N회)
-      final dailyCount = _extractDailyCount(ocrText);
-
-      // 6. 기본 복용 시간 설정 (횟수에 따라)
+      final setName = _determineSetName(categoryTally, verifiedNames, verifiedMedicines, bracketCategory);
       final recommendedTimes = _buildRecommendedTimes(dailyCount);
 
-      print('💊 setName: $setName');
+      print('💊 최종 setName: $setName');
       print('📦 며칠치: ${supplyDays ?? "미확인"}');
       print('🔁 1일 $dailyCount회');
-      print('💊 약품 목록: $rawNames');
-      print('🏷️ 카테고리 집계: $categoryTally');
 
       return {
         'setName': setName,
-        'medicines': rawNames,
-        'supplyDays': supplyDays,     // ⭐ 며칠치 (int? nullable)
+        'medicines': verifiedNames,
+        'verifiedMedicines': verifiedMedicines,
+        'supplyDays': supplyDays,
         'dailyCount': dailyCount,
         'recommendedTimes': recommendedTimes,
-        'matchedCategories': matchedCategories,
+        'matchedCategories': categoryTally.keys.toList(),
         'rawText': ocrText,
       };
     } catch (e) {
       print('❌ 정보 추출 에러: $e');
-      return {
-        'setName': '처방약',
-        'medicines': <String>[],
-        'supplyDays': null,
-        'dailyCount': 3,
-        'recommendedTimes': _buildRecommendedTimes(3),
-        'matchedCategories': <String>[],
-        'rawText': ocrText,
-      };
+      return extractMedicineInfo(ocrText);
     }
   }
 
   // ────────────────────────────────────────────────────────────────────────────
-  // 며칠치 추출
+  // 폴백용 로컬 추출
   // ────────────────────────────────────────────────────────────────────────────
+  Map<String, dynamic> extractMedicineInfo(String ocrText) {
+    final cleanedText = _preprocessText(ocrText);
+    final supplyDays = _extractSupplyDays(cleanedText);
+    final dailyCount = _extractDailyCount(cleanedText);
+    final rawNames = _extractMedicineNames(cleanedText);
+    final bracketCategory = _extractBracketCategory(cleanedText);
 
+    return {
+      'setName': bracketCategory ?? (rawNames.isNotEmpty ? rawNames.first : '처방약'),
+      'medicines': rawNames,
+      'verifiedMedicines': <Map<String, dynamic>>[],
+      'supplyDays': supplyDays,
+      'dailyCount': dailyCount,
+      'recommendedTimes': _buildRecommendedTimes(dailyCount),
+      'matchedCategories': bracketCategory != null ? [bracketCategory] : <String>[],
+      'rawText': ocrText,
+    };
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // ⭐ 전처리 강화 (세로 사진, 구겨진 사진 대비)
+  // ────────────────────────────────────────────────────────────────────────────
+  String _preprocessText(String text) {
+    return text
+    // OCR 오류 보정
+        .replaceAll('l일', '1일')
+        .replaceAll('O일', '0일')
+        .replaceAll('o일', '0일')
+        .replaceAll('ㅇ(', '이(')
+        .replaceAll('1회투약량', ' 1회투약량')
+        .replaceAll('1일투여횟수', ' 1일투여횟수')
+        .replaceAll('총투약일수', ' 총투약일수')
+    // N정씩 N회 N일분 패턴 보정
+        .replaceAll(RegExp(r'(\d+)정씩'), r'\1정씩 ')
+        .replaceAll(RegExp(r'(\d+)캡슐씩'), r'\1캡슐씩 ')
+    // 특수문자 정리
+        .replaceAll(RegExp(r'[※◆◇▶▷►▸●○■□]'), ' ')
+        .replaceAll(RegExp(r'\r\n'), '\n')
+        .replaceAll(RegExp(r'\r'), '\n')
+    // 연속 공백 정리
+        .replaceAll(RegExp(r'[ \t]+'), ' ');
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // ⭐ 대괄호 카테고리 추출 (핵심 개선!)
+  // 예) [세팔로스포린계 항생제] → '항생제'
+  //     [H2 차단제] → '위장약'
+  //     [소화성궤양 치료제] → '위장약'
+  // ────────────────────────────────────────────────────────────────────────────
+  String? _extractBracketCategory(String text) {
+    // 대괄호 패턴 전체 추출
+    final bracketPattern = RegExp(r'\[([^\]]{2,20})\]');
+    final matches = bracketPattern.allMatches(text);
+
+    final categoryTally = <String, int>{};
+
+    for (final match in matches) {
+      final content = match.group(1)!.trim();
+      print('🔍 대괄호 내용: $content');
+
+      // 대괄호 내용에서 카테고리 매핑
+      for (final entry in _bracketCategoryMap.entries) {
+        if (content.contains(entry.key)) {
+          categoryTally[entry.value] = (categoryTally[entry.value] ?? 0) + 1;
+          print('   → 카테고리: ${entry.value}');
+          break;
+        }
+      }
+    }
+
+    if (categoryTally.isEmpty) return null;
+
+    // 가장 많이 나온 카테고리 반환
+    final sorted = categoryTally.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return sorted.first.key;
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // ⭐ 약품명 추출 강화
+  // ────────────────────────────────────────────────────────────────────────────
+  List<String> _extractMedicineNames(String ocrText) {
+    final names = <String>[];
+    final lines = ocrText.split('\n');
+
+    for (var line in lines) {
+      line = line.trim();
+      if (line.isEmpty) continue;
+      if (_shouldExcludeLine(line)) continue;
+      if (RegExp(r'^[\d\s.,/\-]+$').hasMatch(line)) continue;
+      if (!RegExp(r'[가-힣a-zA-Z]').hasMatch(line)) continue;
+
+      // ── 우선순위 1: 별표(*) 약품명 ────────────────────────────
+      if (line.startsWith('*')) {
+        final name = _trimDosage(_cleanMedicineName(line.substring(1)));
+        if (_isValidMedicineName(name) && !names.contains(name)) {
+          names.add(name);
+          print('⭐ 별표 약품명: $name');
+          continue;
+        }
+      }
+
+      // ── 우선순위 2: mg/mcg 포함 + 제형 키워드 ─────────────────
+      // 예) "경보세푸록심아세틸정250mg", "엘도투캡슐300mg"
+      final mgFormPattern = RegExp(
+        r'([가-힣a-zA-Z]+(?:정|캡슐|시럽|액|산|환|연고|크림|겔|서방정|이알서방정|SR|XR|ER))\s*\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml)',
+        caseSensitive: false,
+      );
+      final mgFormMatch = mgFormPattern.firstMatch(line);
+      if (mgFormMatch != null) {
+        final name = _cleanMedicineName(mgFormMatch.group(1)!);
+        if (_isValidMedicineName(name) && !names.contains(name)) {
+          names.add(name);
+          print('💊 mg+제형 약품명: $name');
+          continue;
+        }
+      }
+
+      // ── 우선순위 3: 제형 키워드만 포함 ───────────────────────
+      final formPattern = RegExp(
+        r'([가-힣a-zA-Z]{3,}(?:정|캡슐|시럽|액|산|환|연고|크림|겔|서방정|이알서방정))',
+        caseSensitive: false,
+      );
+      final formMatch = formPattern.firstMatch(line);
+      if (formMatch != null) {
+        final name = _cleanMedicineName(formMatch.group(0)!);
+        if (_isValidMedicineName(name) && !names.contains(name)) {
+          names.add(name);
+          print('💊 제형 패턴: $name');
+          continue;
+        }
+      }
+
+      // ── 우선순위 4: "N정씩 N회 N일분" 앞의 약품명 ─────────────
+      // 예) "베아제정제 1정씩 3회 5일분"
+      final dosePattern = RegExp(r'^([가-힣a-zA-Z]{3,})\s+\d+[정캡슐ml]');
+      final doseMatch = dosePattern.firstMatch(line);
+      if (doseMatch != null) {
+        final name = _cleanMedicineName(doseMatch.group(1)!);
+        if (_isValidMedicineName(name) && !names.contains(name)) {
+          names.add(name);
+          print('💊 용량앞 약품명: $name');
+          continue;
+        }
+      }
+    }
+
+    // 전체 텍스트 보완 스캔
+    _extractStarNamesFromFullText(ocrText, names);
+    _extractMgNamesFromFullText(ocrText, names);
+
+    return names;
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 전체 텍스트 별표 약품명 스캔
+  // ────────────────────────────────────────────────────────────────────────────
+  void _extractStarNamesFromFullText(String text, List<String> existing) {
+    final starPattern = RegExp(
+      r'\*([가-힣a-zA-Z][가-힣a-zA-Z\d]+(?:정|캡슐|시럽|액|산|환|연고|크림|겔|서방정)?)',
+    );
+    for (final match in starPattern.allMatches(text)) {
+      final name = _trimDosage(_cleanMedicineName(match.group(1)!));
+      if (_isValidMedicineName(name) && !existing.contains(name)) {
+        existing.add(name);
+        print('🔍 전체텍스트 별표: $name');
+      }
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // ⭐ 전체 텍스트에서 "약품명mg" 패턴 추출
+  // 예) "프리투스정50mg", "스토맨정", "덱시네정"
+  // ────────────────────────────────────────────────────────────────────────────
+  void _extractMgNamesFromFullText(String text, List<String> existing) {
+    // "약품명 + 숫자 + mg" 패턴
+    final mgPattern = RegExp(
+      r'([가-힣a-zA-Z]{3,}(?:정|캡슐|시럽|액|산|연고|서방정)?)\s*\d+(?:\.\d+)?\s*(?:mg|mcg|g)',
+      caseSensitive: false,
+    );
+    for (final match in mgPattern.allMatches(text)) {
+      final raw = match.group(1) ?? '';
+      final name = _cleanMedicineName(raw);
+      if (_isValidMedicineName(name) && !existing.contains(name)) {
+        existing.add(name);
+        print('🔍 mg패턴 약품명: $name');
+      }
+    }
+
+    // "1회투약량" 앞의 약품명
+    final dosePattern = RegExp(
+      r'([가-힣a-zA-Z]{3,}(?:정|캡슐|시럽|액|산|연고|서방정)[\d가-힣]*)\s*\d*회투약량',
+    );
+    for (final match in dosePattern.allMatches(text)) {
+      final name = _cleanMedicineName(match.group(1)!);
+      if (_isValidMedicineName(name) && !existing.contains(name)) {
+        existing.add(name);
+        print('🔍 투약량앞 약품명: $name');
+      }
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // ⭐ 며칠치 추출 강화
+  // 다양한 약봉투 패턴 대응
+  // ────────────────────────────────────────────────────────────────────────────
   int? _extractSupplyDays(String text) {
-    // 패턴 예시: "3일분", "7 일분", "14일치", "투약일수 : 5", "처방일수:10"
     final patterns = [
+      // 표준 패턴
+      RegExp(r'총\s*투약\s*일수\s*[:\s]*(\d+)'),
+      RegExp(r'총투약일수\s*(\d+)'),
       RegExp(r'(\d+)\s*일분'),
       RegExp(r'(\d+)\s*일치'),
       RegExp(r'투약\s*일수\s*[:\s]\s*(\d+)'),
       RegExp(r'처방\s*일수\s*[:\s]\s*(\d+)'),
       RegExp(r'조제\s*일수\s*[:\s]\s*(\d+)'),
-      RegExp(r'복용\s*일수\s*[:\s]\s*(\d+)'),
+      // ⭐ 추가 패턴 (사진에서 발견)
+      RegExp(r'총\s*투약\s*(\d+)'),              // "총투약 5"
+      RegExp(r'(\d+)일\s*처방'),                 // "5일 처방"
+      RegExp(r'복용\s*기간\s*[:\s]*(\d+)'),      // "복용기간: 5"
+      RegExp(r'(\d+)\s*일간'),                   // "5일간"
+      // "1정씩 3회 5일분" 에서 일수 추출
+      RegExp(r'\d+[정캡슐ml씩]+\s*\d+회\s*(\d+)일분'),
+      RegExp(r'\d+[정캡슐ml씩]+\s*\d+[회번]\s*(\d+)일'),
     ];
 
     for (final pattern in patterns) {
@@ -380,7 +459,7 @@ class OCRService {
       if (match != null) {
         final days = int.tryParse(match.group(1)!);
         if (days != null && days > 0 && days <= 365) {
-          print('📦 며칠치 발견: $days일');
+          print('📦 며칠치 발견: $days일 (패턴: ${pattern.pattern})');
           return days;
         }
       }
@@ -389,111 +468,157 @@ class OCRService {
   }
 
   // ────────────────────────────────────────────────────────────────────────────
-  // 1일 복용 횟수 추출
+  // ⭐ 복용 횟수 추출 강화
   // ────────────────────────────────────────────────────────────────────────────
-
   int _extractDailyCount(String text) {
-    // 패턴: "1일 3회", "하루 2회", "1일3회", "하루3번"
     final patterns = [
+      // 약봉투 실제 패턴
+      RegExp(r'1\s*일\s*투여\s*횟수\s*(\d)'),
+      RegExp(r'1\s*일\s*투약\s*횟수\s*[:\s]*(\d)'),
+      RegExp(r'일\s*투여\s*횟수\s*(\d)'),
+      // 일반 패턴
       RegExp(r'1\s*일\s*(\d)\s*회'),
       RegExp(r'하루\s*(\d)\s*[회번]'),
       RegExp(r'(\d)\s*회\s*/\s*일'),
       RegExp(r'(\d)\s*번\s*/\s*일'),
+      // ⭐ 추가 패턴 (사진에서 발견)
+      RegExp(r'1일\s*(\d)회'),                  // "1일3회"
+      RegExp(r'(\d)회\s*복용'),                 // "3회 복용"
+      // "아침 점심 저녁" 키워드로 추론
+      RegExp(r'아침.*점심.*저녁'),               // 3회
+      RegExp(r'아침.*저녁'),                    // 2회
+      // "1정씩 3회" 패턴
+      RegExp(r'\d+[정캡슐ml씩]+\s*(\d+)\s*[회번]'),
     ];
 
-    for (final pattern in patterns) {
-      final match = pattern.firstMatch(text);
+    // 숫자 추출 패턴
+    for (int i = 0; i < patterns.length - 3; i++) {
+      final match = patterns[i].firstMatch(text);
       if (match != null) {
         final count = int.tryParse(match.group(1)!);
-        if (count != null && count >= 1 && count <= 3) return count;
+        if (count != null && count >= 1 && count <= 4) {
+          print('🔁 복용횟수: $count회');
+          return count;
+        }
       }
     }
 
-    // 기본값: 3회 (아침·점심·저녁)
-    return 3;
+    // 시간 키워드로 추론
+    if (patterns[patterns.length - 3].hasMatch(text)) return 3; // 아침점심저녁
+    if (patterns[patterns.length - 2].hasMatch(text)) return 2; // 아침저녁
+
+    // "1정씩 N회" 패턴
+    final doseMatch = patterns[patterns.length - 1].firstMatch(text);
+    if (doseMatch != null) {
+      final count = int.tryParse(doseMatch.group(1)!);
+      if (count != null && count >= 1 && count <= 4) return count;
+    }
+
+    return 3; // 기본값
   }
 
   // ────────────────────────────────────────────────────────────────────────────
-  // 약품명 라인 추출
+  // description에서 카테고리 추출
   // ────────────────────────────────────────────────────────────────────────────
-
-  List<String> _extractMedicineNames(String ocrText) {
-    const excludeKeywords = [
-      '계산서', '영수증', '약국', '약사', '조제일', '복약안내', '전문가',
-      '상의', '처방', '원장', '조제', '조제료', '약국명', '약국주소',
-      '전화', '팩스', '사업자', '등록번호', '병원', '의원', '의사',
-      '진료', '보험', '급여', '비급여', '총액', '본인부담', '공단부담',
-    ];
-
-    final lines = ocrText.split('\n');
-    final names = <String>[];
-
-    for (var line in lines) {
-      line = line.trim();
-      if (line.isEmpty || line.length < 3 || line.length > 30) continue;
-      if (!RegExp(r'[가-힣a-zA-Z]').hasMatch(line)) continue;
-
-      final shouldExclude = excludeKeywords.any((k) => line.contains(k));
-      if (shouldExclude) continue;
-
-      // 약품명 키워드 포함 여부 (한글 약품명)
-      final hasMedicineKeyword =
-          line.contains('정') || line.contains('캡슐') ||
-              line.contains('액') || line.contains('시럽') ||
-              line.contains('산') || line.contains('환') ||
-              line.contains('연고') || line.contains('크림') ||
-              line.contains('점안') || line.contains('주사') ||
-              line.contains('mg') || line.contains('mcg');
-
-      if (!hasMedicineKeyword) continue;
-
-      final cleaned = line
-          .replaceAll(RegExp(r'[•]'), '')     // 불렛 포인트 제거
-          .replaceAll(RegExp(r'[\[\]]'), '')  // 대괄호 [ ] 제거
-          .replaceAll(RegExp('["\' ]'), '') // 따옴표 ' " 제거
-          .replaceAll(RegExp(r'[|!]'), '') // 파이프 및 느낌표 제거
-          .replaceAll(RegExp(r'\s+'), ' ')
-          .trim();
-
-      if (cleaned.length >= 3 && !names.contains(cleaned)) {
-        names.add(cleaned);
-        print('💊 약품명 발견: $cleaned');
-      }
+  String? _extractCategoryFromDesc(String desc) {
+    for (final entry in _bracketCategoryMap.entries) {
+      if (desc.contains(entry.key)) return entry.value;
     }
-
-    return names;
-  }
-
-  // ────────────────────────────────────────────────────────────────────────────
-  // DB 카테고리 매칭
-  // ────────────────────────────────────────────────────────────────────────────
-
-  String? _lookupCategory(String medicineName) {
-    // 소문자·공백 제거 후 비교
-    final normalized = medicineName
-        .toLowerCase()
-        .replaceAll(RegExp(r'\s+'), '')
-        .replaceAll(RegExp(r'[^\w가-힣]'), '');
-
-    // 정확히 포함하는 키 탐색
-    for (final entry in _medicineDatabase.entries) {
-      final key = entry.key
-          .toLowerCase()
-          .replaceAll(RegExp(r'\s+'), '');
-      if (normalized.contains(key) || key.contains(normalized)) {
-        print('   🏷️ "$medicineName" → ${entry.value}');
-        return entry.value;
-      }
-    }
-
-    // 매칭 실패
-    print('   ❓ "$medicineName" → 미분류');
     return null;
   }
 
   // ────────────────────────────────────────────────────────────────────────────
-  // 복용 횟수에 따른 기본 시간 생성
+  // setName 결정
   // ────────────────────────────────────────────────────────────────────────────
+  String _determineSetName(
+      Map<String, int> categoryTally,
+      List<String> names,
+      List<Map<String, dynamic>> verifiedMedicines,
+      String? bracketCategory,
+      ) {
+    // 1. 대괄호 카테고리 최우선
+    if (bracketCategory != null) return bracketCategory;
+
+    // 2. DB 카테고리 매칭
+    if (categoryTally.isNotEmpty) {
+      final sorted = categoryTally.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      if (sorted.length == 1 || sorted[0].value > sorted[1].value) {
+        return sorted.first.key;
+      }
+      return '${sorted[0].key}·${sorted[1].key}';
+    }
+
+    // 3. 서버 검증 약품명
+    if (verifiedMedicines.isNotEmpty) {
+      final firstName = verifiedMedicines[0]['name'] as String? ?? '';
+      final simplified = firstName.split(RegExp(r'[\d(]'))[0].trim();
+      if (simplified.length >= 3) return simplified;
+    }
+
+    // 4. OCR 약품명
+    if (names.isNotEmpty) {
+      final best = names.firstWhere((n) => n.length >= 4, orElse: () => names.first);
+      return best.split(RegExp(r'[\d(]'))[0].trim();
+    }
+
+    return '처방약';
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 헬퍼 함수들
+  // ────────────────────────────────────────────────────────────────────────────
+  bool _shouldExcludeLine(String line) {
+    // 대괄호만 있는 라인은 제외 (약품명 아님)
+    if (RegExp(r'^\[.*\]$').hasMatch(line)) return true;
+
+    for (final kw in _excludeKeywords) {
+      if (line.contains(kw)) return true;
+    }
+    for (final color in _colorWords) {
+      if (line.contains(color)) return true;
+    }
+
+    // 복용법만 있는 라인 제외 ("1정씩 3회 5일분")
+    if (RegExp(r'^\d+[정캡슐ml씩]+\s*\d+[회번]\s*\d+일').hasMatch(line)) return true;
+
+    return false;
+  }
+
+  String _cleanMedicineName(String raw) {
+    return raw
+        .replaceAll(RegExp(r'[*•\[\]"|!@#%^&]'), '')
+        .replaceAll("'", '')
+        .replaceAll('_', '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  String _trimDosage(String name) {
+    return name
+        .replaceAll(
+        RegExp(r'\d+(?:\.\d+)?(?:밀리그람|밀리|mg|mcg|g|ml|밀).*$',
+            caseSensitive: false),
+        '')
+        .trim();
+  }
+
+  bool _isValidMedicineName(String name) {
+    if (name.length < 3 || name.length > 50) return false;
+    if (!RegExp(r'[가-힣a-zA-Z]').hasMatch(name)) return false;
+
+    for (final color in _colorWords) {
+      if (name.contains(color)) return false;
+    }
+    for (final kw in _excludeKeywords) {
+      if (name.contains(kw)) return false;
+    }
+
+    // 숫자만 있거나 특수문자만 있는 경우 제외
+    if (RegExp(r'^[\d\s\-.,]+$').hasMatch(name)) return false;
+
+    return true;
+  }
 
   List<TimeOfDay> _buildRecommendedTimes(int count) {
     switch (count) {
@@ -503,6 +628,13 @@ class OCRService {
         return [
           const TimeOfDay(hour: 8, minute: 0),
           const TimeOfDay(hour: 20, minute: 0),
+        ];
+      case 4:
+        return [
+          const TimeOfDay(hour: 8, minute: 0),
+          const TimeOfDay(hour: 12, minute: 0),
+          const TimeOfDay(hour: 18, minute: 0),
+          const TimeOfDay(hour: 22, minute: 0),
         ];
       case 3:
       default:

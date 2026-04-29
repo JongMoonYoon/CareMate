@@ -128,9 +128,7 @@ class BeaconService {
     _scanSubscription = FlutterBluePlus.scanResults.listen(
           (results) {
         // ⭐ 일단 주변에 잡히는 모든 기기 출력해서 비콘이 보이는지 확인
-        for (final r in results) {
-          print('👀 감지된 기기: ${r.device.remoteId.str} | RSSI: ${r.rssi}');
-        }
+
         _onScanResults(results);
       },
       onError: (e) => print('❌ 스캔 에러: $e'),

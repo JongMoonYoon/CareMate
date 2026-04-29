@@ -11,6 +11,7 @@ class OCRScanScreen extends StatefulWidget {
 class _OCRScanScreenState extends State<OCRScanScreen> {
   final OCRService _ocrService = OCRService();
   bool _isLoading = false;
+  String _loadingMessage = '텍스트 인식 중...';
 
   @override
   void dispose() {
@@ -19,14 +20,25 @@ class _OCRScanScreenState extends State<OCRScanScreen> {
   }
 
   Future<void> _scanFromGallery() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _loadingMessage = '텍스트 인식 중...';
+    });
     try {
-      final result = await _ocrService.scanFromGallery();
+      final ocrText = await _ocrService.scanFromGallery();
+      if (ocrText.isEmpty) {
+        setState(() => _isLoading = false);
+        _showErrorDialog('텍스트를 인식하지 못했어요.\n다시 시도해주세요.');
+        return;
+      }
+      setState(() => _loadingMessage = 'AI가 약품명 분석 중...');
+      final result = await _ocrService.extractMedicineInfoWithServer(ocrText);
       setState(() => _isLoading = false);
-      if (result.isNotEmpty) {
+
+      if ((result['medicines'] as List).isNotEmpty) {
         _showResultDialog(result);
       } else {
-        _showErrorDialog('텍스트를 인식하지 못했어요.\n다시 시도해주세요.');
+        _showErrorDialog('약품명을 인식하지 못했어요.\n다시 시도해주세요.');
       }
     } catch (e) {
       setState(() => _isLoading = false);
@@ -35,14 +47,25 @@ class _OCRScanScreenState extends State<OCRScanScreen> {
   }
 
   Future<void> _scanWithCamera() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _loadingMessage = '텍스트 인식 중...';
+    });
     try {
-      final result = await _ocrService.scanFromCamera();
+      final ocrText = await _ocrService.scanFromCamera();
+      if (ocrText.isEmpty) {
+        setState(() => _isLoading = false);
+        _showErrorDialog('텍스트를 인식하지 못했어요.\n다시 시도해주세요.');
+        return;
+      }
+      setState(() => _loadingMessage = 'AI가 약품명 분석 중...');
+      final result = await _ocrService.extractMedicineInfoWithServer(ocrText);
       setState(() => _isLoading = false);
-      if (result.isNotEmpty) {
+
+      if ((result['medicines'] as List).isNotEmpty) {
         _showResultDialog(result);
       } else {
-        _showErrorDialog('텍스트를 인식하지 못했어요.\n다시 시도해주세요.');
+        _showErrorDialog('약품명을 인식하지 못했어요.\n다시 시도해주세요.');
       }
     } catch (e) {
       setState(() => _isLoading = false);
@@ -66,16 +89,15 @@ class _OCRScanScreenState extends State<OCRScanScreen> {
     );
   }
 
-  void _showResultDialog(String text) {
-    final info = _ocrService.extractMedicineInfo(text);
-
+  void _showResultDialog(Map<String, dynamic> info) {
     final List<TimeOfDay> times = info['recommendedTimes'] ?? [];
     final int? supplyDays = info['supplyDays'];
     final int dailyCount = info['dailyCount'] ?? 3;
     final String setName = info['setName'] ?? '처방약';
     final List<String> medicines = List<String>.from(info['medicines'] ?? []);
+    final List<Map<String, dynamic>> verifiedMedicines =
+    List<Map<String, dynamic>>.from(info['verifiedMedicines'] ?? []);
 
-    // 시간 문자열 리스트
     final timeStrings = times
         .map((t) =>
     '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}')
@@ -91,7 +113,7 @@ class _OCRScanScreenState extends State<OCRScanScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
 
-              // ── 약 이름 + 핵심 정보 ────────────────────────────────
+              // 핵심 정보
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(14),
@@ -112,7 +134,6 @@ class _OCRScanScreenState extends State<OCRScanScreen> {
                       ),
                     ),
                     const SizedBox(height: 10),
-                    // 며칠치
                     _infoRow(
                       icon: '📦',
                       label: '보유량',
@@ -120,57 +141,124 @@ class _OCRScanScreenState extends State<OCRScanScreen> {
                       highlight: supplyDays != null,
                     ),
                     const SizedBox(height: 6),
-                    // 1일 복용 횟수
-                    _infoRow(
-                      icon: '🔁',
-                      label: '하루 복용',
-                      value: '1일 $dailyCount회',
-                    ),
+                    _infoRow(icon: '🔁', label: '하루 복용', value: '1일 $dailyCount회'),
                     const SizedBox(height: 6),
-                    // 복용 시간
-                    _infoRow(
-                      icon: '⏰',
-                      label: '복용 시간',
-                      value: timeStrings,
-                    ),
+                    _infoRow(icon: '⏰', label: '복용 시간', value: timeStrings),
                   ],
                 ),
               ),
 
               const SizedBox(height: 14),
 
-              // ── 약품 목록 ─────────────────────────────────────────
+              // DB 확인된 약품 전체 목록
+              if (verifiedMedicines.isNotEmpty) ...[
+                Row(
+                  children: [
+                    const Text(
+                      '✅ 식약처 DB 확인된 약품',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.green,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '${verifiedMedicines.length}개',
+                        style: const TextStyle(color: Colors.white, fontSize: 11),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                // ⭐ take(6) 제거 → 전체 표시
+                ...verifiedMedicines.map((med) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: (med['db_matched'] == true)
+                          ? Colors.blue.shade50
+                          : Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: (med['db_matched'] == true)
+                            ? Colors.blue.shade100
+                            : Colors.grey.shade300,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                med['name'] ?? '',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  color: (med['db_matched'] == true)
+                                      ? Colors.blue
+                                      : Colors.grey.shade700,
+                                ),
+                              ),
+                            ),
+                            if (med['db_matched'] == true)
+                              const Text('✅', style: TextStyle(fontSize: 11))
+                            else
+                              const Text('❓', style: TextStyle(fontSize: 11)),
+                          ],
+                        ),
+                        if ((med['description'] ?? '').isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 3),
+                            child: Text(
+                              med['description'] ?? '',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ),
+                        if ((med['company'] ?? '').isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              med['company'] ?? '',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Colors.grey.shade500,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                )),
+                const SizedBox(height: 8),
+              ],
+
+              // 전체 인식 약품 목록
               Text(
                 '📋 인식된 약품 (${medicines.length}개)',
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                ),
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
               ),
               const SizedBox(height: 6),
               if (medicines.isEmpty)
                 const Padding(
                   padding: EdgeInsets.only(left: 8),
-                  child: Text(
-                    '(약품명을 찾지 못했어요)',
-                    style: TextStyle(color: Colors.grey, fontSize: 12),
-                  ),
+                  child: Text('(약품명을 찾지 못했어요)',
+                      style: TextStyle(color: Colors.grey, fontSize: 12)),
                 )
               else
-                ...medicines.take(6).map((name) => Padding(
+              // ⭐ take(6) 제거 → 전체 표시
+                ...medicines.map((name) => Padding(
                   padding: const EdgeInsets.only(left: 8, bottom: 4),
-                  child: Text('• $name',
-                      style: const TextStyle(fontSize: 12)),
+                  child: Text('• $name', style: const TextStyle(fontSize: 12)),
                 )),
-              if (medicines.length > 6)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Text(
-                    '외 ${medicines.length - 6}개...',
-                    style: const TextStyle(
-                        fontSize: 12, color: Colors.grey),
-                  ),
-                ),
 
               const SizedBox(height: 10),
               const Text(
@@ -187,12 +275,10 @@ class _OCRScanScreenState extends State<OCRScanScreen> {
           ),
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(context);       // 다이얼로그 닫기
-              Navigator.pop(context, info); // ⭐ 결과 전달 (add_medicine_screen으로)
+              Navigator.pop(context);
+              Navigator.pop(context, info);
             },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-            ),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
             child: const Text('이대로 등록하기'),
           ),
         ],
@@ -210,17 +296,13 @@ class _OCRScanScreenState extends State<OCRScanScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('$icon ', style: const TextStyle(fontSize: 14)),
-        Text(
-          '$label: ',
-          style: const TextStyle(fontSize: 13, color: Colors.black54),
-        ),
+        Text('$label: ', style: const TextStyle(fontSize: 13, color: Colors.black54)),
         Expanded(
           child: Text(
             value,
             style: TextStyle(
               fontSize: 13,
-              fontWeight:
-              highlight ? FontWeight.bold : FontWeight.normal,
+              fontWeight: highlight ? FontWeight.bold : FontWeight.normal,
               color: highlight ? Colors.green.shade700 : Colors.black87,
             ),
           ),
@@ -238,12 +320,16 @@ class _OCRScanScreenState extends State<OCRScanScreen> {
       ),
       body: Center(
         child: _isLoading
-            ? const Column(
+            ? Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(color: Colors.green),
-            SizedBox(height: 20),
-            Text('텍스트 인식 중...'),
+            const CircularProgressIndicator(color: Colors.green),
+            const SizedBox(height: 20),
+            Text(_loadingMessage,
+                style: const TextStyle(fontSize: 16, color: Colors.green)),
+            const SizedBox(height: 8),
+            const Text('AI가 약품명을 분석 중이에요...',
+                style: TextStyle(fontSize: 13, color: Colors.grey)),
           ],
         )
             : Padding(
@@ -251,19 +337,14 @@ class _OCRScanScreenState extends State<OCRScanScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.document_scanner,
-                  size: 100, color: Colors.green),
+              const Icon(Icons.document_scanner, size: 100, color: Colors.green),
               const SizedBox(height: 20),
-              const Text(
-                '약 봉투를 스캔해주세요',
-                style: TextStyle(
-                    fontSize: 20, fontWeight: FontWeight.bold),
-              ),
+              const Text('약 봉투를 스캔해주세요',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               Text(
-                '약 이름과 며칠치를 자동으로 인식해요',
-                style: TextStyle(
-                    fontSize: 14, color: Colors.grey.shade600),
+                'AI가 약품명을 정확하게 인식해요',
+                style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
               ),
               const SizedBox(height: 40),
               SizedBox(
@@ -277,8 +358,7 @@ class _OCRScanScreenState extends State<OCRScanScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(15),
-                    ),
+                        borderRadius: BorderRadius.circular(15)),
                   ),
                 ),
               ),
@@ -293,11 +373,9 @@ class _OCRScanScreenState extends State<OCRScanScreen> {
                       style: TextStyle(fontSize: 18)),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.green,
-                    side: const BorderSide(
-                        color: Colors.green, width: 2),
+                    side: const BorderSide(color: Colors.green, width: 2),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(15),
-                    ),
+                        borderRadius: BorderRadius.circular(15)),
                   ),
                 ),
               ),
