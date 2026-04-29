@@ -47,7 +47,6 @@ dependencies:
   google_mlkit_text_recognition: ^0.13.0
   flutter_tesseract_ocr: ^0.4.11
   flutter_blue_plus: ^1.31.0
-
   # 권한 처리
 
   # The following adds the Cupertino Icons font to your application.

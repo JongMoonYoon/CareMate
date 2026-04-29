@@ -8,6 +8,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'service/notification_service.dart';
+import 'beacon/beacon_service.dart';
+import 'beacon/beacon_overlay_widget.dart';
+import 'beacon/beacon_quick_pair_sheet.dart';
+
 
 const String serverUrl = 'https://ornamented-jeramy-achromatically.ngrok-free.app';
 const String userId = 'user_001';
@@ -16,6 +20,9 @@ void main() async {
   // 1. Flutter 엔진 초기화 및 알람 서비스 시작
   WidgetsFlutterBinding.ensureInitialized();
   await NotificationService.initialize();
+
+  // ⭐ 블루투스 권한 요청 (Android 12+ 필수)
+  await _requestBluetoothPermissions();
 
   runApp(MaterialApp( // ⭐ const 제거!
     home: const PlantCareApp(),
@@ -50,6 +57,17 @@ void main() async {
   ));
 }
 
+// ⭐ 블루투스 권한 요청
+Future<void> _requestBluetoothPermissions() async {
+  // Android 12+ (API 31+)
+  await [
+    Permission.bluetoothScan,
+    Permission.bluetoothConnect,
+    Permission.locationWhenInUse,
+  ].request();
+  print('✅ 블루투스 권한 요청 완료');
+}
+
 // 전역 약 리스트
 class GlobalMedicineList {
   static List<Medicine> medicines = [];
@@ -59,13 +77,15 @@ class GlobalMedicineList {
   static int todayMedicine = 0;
   static int totalMedicine = 0;
 
+  // ⭐ 전역 비콘 ID (약통 하나에 하나의 비콘)
+  static String pairedBeaconId = '';
+
   static Future<void> save() async {
     final prefs = await SharedPreferences.getInstance();
     final jsonList = medicines.map((m) => {
       'name': m.name,
       'hour': m.alarmTime.hour,
       'minute': m.alarmTime.minute,
-      'beaconId': m.beaconId,
       'isTaken': m.isTaken,
       'selectedDays': m.selectedDays,
     }).toList();
@@ -75,6 +95,7 @@ class GlobalMedicineList {
     await prefs.setInt('plantLevel', plantLevel);
     await prefs.setInt('todayMedicine', todayMedicine);
     await prefs.setInt('totalMedicine', totalMedicine);
+    await prefs.setString('pairedBeaconId', pairedBeaconId); // ⭐
   }
 
   static Future<void> load() async {
@@ -89,7 +110,6 @@ class GlobalMedicineList {
           hour: json['hour'],
           minute: json['minute'],
         ),
-        beaconId: json['beaconId'] ?? '',
         selectedDays: json['selectedDays'] != null
             ? List<int>.from(json['selectedDays'])
             : [0, 1, 2, 3, 4, 5, 6],
@@ -101,6 +121,7 @@ class GlobalMedicineList {
     plantLevel = prefs.getInt('plantLevel') ?? 1;
     todayMedicine = prefs.getInt('todayMedicine') ?? 0;
     totalMedicine = prefs.getInt('totalMedicine') ?? 0;
+    pairedBeaconId = prefs.getString('pairedBeaconId') ?? ''; // ⭐
   }
 }
 
@@ -130,14 +151,12 @@ class Medicine {
   final String name;
   final TimeOfDay alarmTime;
   final List<int> selectedDays;
-  final String beaconId;
   bool isTaken;
 
   Medicine({
     required this.name,
     required this.alarmTime,
     this.selectedDays = const [0, 1, 2, 3, 4, 5, 6],
-    this.beaconId = "",
     this.isTaken = false,
   });
 }
@@ -204,19 +223,144 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _loadMedicines();
     _cleanupOldRecords();
+    _startBeaconService(); // ⭐ 비콘 서비스 시작
     // NotificationService.cancelAllAlarms();
     // NotificationService.showTestNotification();
+  }
 
+  // ⭐ 비콘 서비스 시작 (전역 단일 비콘)
+  Future<void> _startBeaconService() async {
+    await Future.delayed(const Duration(milliseconds: 500));
 
+    // ⭐ 페어링 화면 거치지 않고 MAC 주소 직접 지정해서 테스트
+    const testBeaconMac = '48:87:2D:9D:C2:4F'; // ← 여기에 실제 MAC 주소 입력
+
+    await BeaconService.instance.start(
+      watchedIds: {testBeaconMac},
+      onTaken: _onBeaconMedicineTaken,
+    );
+  }
+
+  // ⭐ 현재 시각과 가장 가까운 알람 시간의 약 찾기
+  Medicine? _findNearestMedicine() {
+    if (GlobalMedicineList.medicines.isEmpty) return null;
+
+    final now = TimeOfDay.now();
+    final nowMinutes = now.hour * 60 + now.minute;
+
+    Medicine? nearest;
+    int minDiff = 999999;
+
+    for (final med in GlobalMedicineList.medicines) {
+      final medMinutes = med.alarmTime.hour * 60 + med.alarmTime.minute;
+      int diff = (medMinutes - nowMinutes).abs();
+      // 자정 넘어가는 경우 처리 (예: 23:50 ↔ 00:10)
+      if (diff > 12 * 60) diff = 24 * 60 - diff;
+
+      if (diff < minDiff) {
+        minDiff = diff;
+        nearest = med;
+      }
+    }
+
+    return nearest;
+  }
+
+  // ⭐ 비콘 감지 → 가장 가까운 시간의 약 확인 팝업
+  Future<void> _onBeaconMedicineTaken(String beaconId) async {
+    final medicine = _findNearestMedicine();
+    if (medicine == null) return;
+    if (!mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('💊', style: TextStyle(fontSize: 52)),
+            const SizedBox(height: 12),
+            Text(
+              medicine.name,
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '약을 드셨나요?',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey.shade600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '복용 시간: ${medicine.alarmTime.hour.toString().padLeft(2, '0')}:${medicine.alarmTime.minute.toString().padLeft(2, '0')}',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey.shade400,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(
+              '아니요',
+              style: TextStyle(color: Colors.grey.shade500, fontSize: 16),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
+            child: const Text(
+              '네, 먹었어요!',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final now = DateTime.now();
+    setState(() {
+      GlobalMedicineList.history.insert(0, '${medicine.name}|${now.toIso8601String()}');
+      GlobalMedicineList.todayMedicine++;
+      GlobalMedicineList.totalMedicine++;
+      GlobalMedicineList.plantLevel = (GlobalMedicineList.totalMedicine ~/ 10) + 1;
+      if (GlobalMedicineList.plantLevel > 5) GlobalMedicineList.plantLevel = 5;
+    });
+
+    await GlobalMedicineList.save();
+    if (mounted) _showGrowthAnimation();
   }
 
   Future<void> _loadMedicines() async {
     await GlobalMedicineList.load();
     if (mounted) {
-      setState(() {
-        // 이 setState가 호출되어야 build 함수 안에서
-        // GlobalMedicineList.plantLevel 등의 최신값을 읽어옵니다.
-      });
+      setState(() {});
+      // 약 로드 완료 후 비콘 서비스 재시작 (저장된 beaconId 반영)
+      BeaconService.instance.stop();
+      _startBeaconService();
     }
   }
 
@@ -307,6 +451,70 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
+            // ⭐ 비콘 상태 위젯
+            const BeaconOverlayWidget(),
+
+            // ⭐ 비콘 연결 버튼 (나무↔약목록 사이, 한 번만 연결)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              child: GestureDetector(
+                onTap: () async {
+                  await BeaconQuickPairSheet.showGlobal(
+                    context,
+                    onPaired: (beaconId) async {
+                      GlobalMedicineList.pairedBeaconId = beaconId;
+                      await GlobalMedicineList.save();
+                      BeaconService.instance.stop();
+                      _startBeaconService();
+                      setState(() {});
+                    },
+                  );
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: GlobalMedicineList.pairedBeaconId.isNotEmpty
+                        ? Colors.blue.shade50
+                        : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: GlobalMedicineList.pairedBeaconId.isNotEmpty
+                          ? Colors.blue.shade300
+                          : Colors.grey.shade300,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        GlobalMedicineList.pairedBeaconId.isNotEmpty
+                            ? Icons.bluetooth_connected
+                            : Icons.bluetooth_disabled,
+                        color: GlobalMedicineList.pairedBeaconId.isNotEmpty
+                            ? Colors.blue
+                            : Colors.grey,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        GlobalMedicineList.pairedBeaconId.isNotEmpty
+                            ? '약통 비콘 연결됨  (탭하면 변경)'
+                            : '약통 비콘 연결하기  →',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: GlobalMedicineList.pairedBeaconId.isNotEmpty
+                              ? Colors.blue.shade600
+                              : Colors.grey.shade500,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
             // 등록된 약 목록
             if (GlobalMedicineList.medicines.isNotEmpty)
               Container(
@@ -360,7 +568,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           IconButton(
                             icon: const Icon(Icons.delete, color: Colors.red),
                             onPressed: () async {
-                              // ⭐ 확인 다이얼로그
                               final confirm = await showDialog<bool>(
                                 context: context,
                                 builder: (context) => AlertDialog(
@@ -381,18 +588,15 @@ class _HomeScreenState extends State<HomeScreen> {
                               );
 
                               if (confirm == true) {
-                                // ⭐ 해당 약의 복약 기록 삭제
                                 GlobalMedicineList.history.removeWhere((record) {
                                   final parts = record.split('|');
                                   return parts[0] == med.name;
                                 });
 
-                                // ⭐ 알람 취소
                                 await NotificationService.cancelAlarm(
                                   med.name.hashCode.abs().remainder(10000),
                                 );
 
-                                // ⭐ 약 삭제
                                 setState(() {
                                   GlobalMedicineList.medicines.remove(med);
                                 });
@@ -670,6 +874,12 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       },
     );
+  }
+
+  @override
+  void dispose() {
+    BeaconService.instance.stop(); // ⭐ 비콘 서비스 중지
+    super.dispose();
   }
 
   void _showGrowthAnimation() {

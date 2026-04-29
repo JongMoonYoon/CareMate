@@ -1,4 +1,4 @@
-// lib/service/beacon_service.dart
+// lib/beacon/beacon_service.dart
 import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
@@ -43,7 +43,7 @@ class BeaconService {
   // ── 설정 값 ────────────────────────────────────────────────────────────────
   static const int _rssiThreshold = -45;      // 초밀착 임계값 (dBm)
   static const int _verifyDurationMs = 2000;  // 검증 시간 2초
-  static const int _rssiSmoothWindow = 3;     // RSSI 평균 계산 샘플 수
+  static const int _rssiSmoothWindow = 1;     // RSSI 평균 계산 샘플 수
   static const int _scanRestartIntervalMs = 3000; // 스캔 재시작 주기
 
   // ── 내부 상태 ──────────────────────────────────────────────────────────────
@@ -120,22 +120,27 @@ class BeaconService {
     _scanSubscription?.cancel();
 
     FlutterBluePlus.startScan(
-      // 감시 비콘만 필터 (없으면 전체 스캔)
-      // withServices: [],
       timeout: const Duration(seconds: 3),
       continuousUpdates: true,
+      androidUsesFineLocation: true, // ← 추가
     );
 
-    _scanSubscription = FlutterBluePlus.scanResults.listen(_onScanResults);
+    _scanSubscription = FlutterBluePlus.scanResults.listen(
+          (results) {
+        // ⭐ 일단 주변에 잡히는 모든 기기 출력해서 비콘이 보이는지 확인
+        for (final r in results) {
+          print('👀 감지된 기기: ${r.device.remoteId.str} | RSSI: ${r.rssi}');
+        }
+        _onScanResults(results);
+      },
+      onError: (e) => print('❌ 스캔 에러: $e'),
+    );
 
-    // 3초마다 재시작하여 연속 스캔 유지
     _scanRestartTimer?.cancel();
     _scanRestartTimer = Timer.periodic(
       const Duration(milliseconds: _scanRestartIntervalMs),
-      (_) => _startScan(),
+          (_) => _startScan(),
     );
-
-    print('🔍 BLE 스캔 시작');
   }
 
   // ── 스캔 결과 처리 ─────────────────────────────────────────────────────────
@@ -202,13 +207,13 @@ class BeaconService {
     // 2초 후 확정
     _verifyTimer = Timer(
       const Duration(milliseconds: _verifyDurationMs),
-      () => _onConfirmed(beaconId),
+          () => _onConfirmed(beaconId),
     );
 
     // 16ms마다 progress 업데이트 (60fps)
     _progressTimer = Timer.periodic(
       const Duration(milliseconds: 16),
-      (_) {
+          (_) {
         if (_verifyStartTime == null) return;
         final elapsed = DateTime.now().difference(_verifyStartTime!).inMilliseconds;
         final progress = (elapsed / _verifyDurationMs).clamp(0.0, 1.0);

@@ -1,13 +1,9 @@
-// lib/screens/beacon_pairing_screen.dart
+// lib/beacon/beacon_pairing_screen.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-import '../main.dart'; // Medicine, GlobalMedicineList
+import '../main.dart';
 
-/// 비콘을 약에 페어링하는 화면
-/// - BLE 스캔해서 주변 기기 표시
-/// - 가장 강한 신호(RSSI 높은 것)를 자동 추천
-/// - 사용자가 약을 선택해서 연결
 class BeaconPairingScreen extends StatefulWidget {
   const BeaconPairingScreen({super.key});
 
@@ -17,7 +13,7 @@ class BeaconPairingScreen extends StatefulWidget {
 
 class _BeaconPairingScreenState extends State<BeaconPairingScreen> {
   StreamSubscription<List<ScanResult>>? _scanSub;
-  final Map<String, ScanResult> _found = {}; // deviceId → ScanResult
+  final Map<String, ScanResult> _found = {};
   bool _isScanning = false;
 
   @override
@@ -49,64 +45,59 @@ class _BeaconPairingScreenState extends State<BeaconPairingScreen> {
       });
     });
 
-    // 5초 후 자동 중지
     Future.delayed(const Duration(seconds: 5), () {
       if (mounted) setState(() => _isScanning = false);
       FlutterBluePlus.stopScan();
     });
   }
 
-  // RSSI 기준 정렬
   List<ScanResult> get _sortedResults {
     final list = _found.values.toList();
-    list.sort((a, b) => b.rssi.compareTo(a.rssi)); // RSSI 강한 순
+    list.sort((a, b) => b.rssi.compareTo(a.rssi));
     return list;
   }
 
-  void _showPairingDialog(ScanResult result) {
-    final medicines = GlobalMedicineList.medicines;
-    if (medicines.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('먼저 약을 등록해주세요!')),
-      );
-      return;
-    }
+  // ⭐ 비콘 탭 → 전역 pairedBeaconId에 저장
+  Future<void> _onBeaconTapped(ScanResult result) async {
+    final beaconId = result.device.remoteId.str;
+    final deviceName = result.device.platformName.isNotEmpty
+        ? result.device.platformName
+        : beaconId;
 
-    showModalBottomSheet(
+    final confirm = await showDialog<bool>(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => _PairingBottomSheet(
-        scanResult: result,
-        medicines: medicines,
-        onPaired: (medicine) async {
-          // ⭐ beaconId 업데이트 후 저장
-          final idx = GlobalMedicineList.medicines.indexOf(medicine);
-          if (idx >= 0) {
-            GlobalMedicineList.medicines[idx] = Medicine(
-              name: medicine.name,
-              alarmTime: medicine.alarmTime,
-              selectedDays: medicine.selectedDays,
-              beaconId: result.device.remoteId.str,
-              isTaken: medicine.isTaken,
-            );
-            await GlobalMedicineList.save();
-          }
-
-          if (mounted) {
-            Navigator.pop(context); // 바텀시트
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                    '✅ ${medicine.name}에 비콘이 연결됐어요!'),
-                backgroundColor: Colors.green,
-              ),
-            );
-          }
-        },
+      builder: (context) => AlertDialog(
+        title: const Text('비콘 연결'),
+        content: Text('"$deviceName"\n을(를) 약통 비콘으로 연결할까요?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            child: const Text('연결'),
+          ),
+        ],
       ),
     );
+
+    if (confirm != true) return;
+
+    // ⭐ 전역 비콘 ID 저장
+    GlobalMedicineList.pairedBeaconId = beaconId;
+    await GlobalMedicineList.save();
+
+    if (mounted) {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ 약통 비콘이 연결됐어요!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
   }
 
   @override
@@ -129,37 +120,48 @@ class _BeaconPairingScreenState extends State<BeaconPairingScreen> {
       ),
       body: Column(
         children: [
-          // 안내 배너
+          // 현재 연결 상태 배너
           Container(
             width: double.infinity,
             margin: const EdgeInsets.all(16),
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.blue.shade50,
+              color: GlobalMedicineList.pairedBeaconId.isNotEmpty
+                  ? Colors.green.shade50
+                  : Colors.blue.shade50,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.blue.shade200),
+              border: Border.all(
+                color: GlobalMedicineList.pairedBeaconId.isNotEmpty
+                    ? Colors.green.shade200
+                    : Colors.blue.shade200,
+              ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  '💡 연결 방법',
-                  style: TextStyle(
+                Text(
+                  GlobalMedicineList.pairedBeaconId.isNotEmpty
+                      ? '✅ 현재 연결된 비콘'
+                      : '💡 연결 방법',
+                  style: const TextStyle(
                       fontWeight: FontWeight.bold, fontSize: 15),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '① 약통에 비콘을 부착하세요.\n'
-                      '② 비콘 가까이 가면 목록에 나타나요.\n'
-                      '③ 기기를 탭해서 약과 연결하세요.',
+                  GlobalMedicineList.pairedBeaconId.isNotEmpty
+                      ? GlobalMedicineList.pairedBeaconId
+                      : '비콘을 가까이 가져오면 목록에 나타나요.\n탭하면 약통 비콘으로 연결됩니다.',
                   style: TextStyle(
-                      fontSize: 13, color: Colors.blue.shade700),
+                    fontSize: 13,
+                    color: GlobalMedicineList.pairedBeaconId.isNotEmpty
+                        ? Colors.green.shade700
+                        : Colors.blue.shade700,
+                  ),
                 ),
               ],
             ),
           ),
 
-          // 스캔 상태
           if (_isScanning)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
@@ -179,7 +181,6 @@ class _BeaconPairingScreenState extends State<BeaconPairingScreen> {
               ),
             ),
 
-          // 기기 목록
           Expanded(
             child: results.isEmpty
                 ? Center(
@@ -190,9 +191,7 @@ class _BeaconPairingScreenState extends State<BeaconPairingScreen> {
                       size: 64, color: Colors.grey.shade300),
                   const SizedBox(height: 16),
                   Text(
-                    _isScanning
-                        ? '기기를 찾고 있어요...'
-                        : '주변에 비콘이 없어요',
+                    _isScanning ? '기기를 찾고 있어요...' : '주변에 비콘이 없어요',
                     style: TextStyle(color: Colors.grey.shade400),
                   ),
                 ],
@@ -203,10 +202,13 @@ class _BeaconPairingScreenState extends State<BeaconPairingScreen> {
               itemCount: results.length,
               itemBuilder: (context, i) {
                 final r = results[i];
+                final isPaired = GlobalMedicineList.pairedBeaconId ==
+                    r.device.remoteId.str;
                 return _BeaconTile(
                   result: r,
-                  isRecommended: i == 0, // RSSI 1위 추천
-                  onTap: () => _showPairingDialog(r),
+                  isRecommended: i == 0,
+                  isPaired: isPaired,
+                  onTap: () => _onBeaconTapped(r),
                 );
               },
             ),
@@ -221,11 +223,13 @@ class _BeaconPairingScreenState extends State<BeaconPairingScreen> {
 class _BeaconTile extends StatelessWidget {
   final ScanResult result;
   final bool isRecommended;
+  final bool isPaired;
   final VoidCallback onTap;
 
   const _BeaconTile({
     required this.result,
     required this.isRecommended,
+    required this.isPaired,
     required this.onTap,
   });
 
@@ -255,22 +259,21 @@ class _BeaconTile extends StatelessWidget {
         ? result.device.platformName
         : result.device.remoteId.str;
 
-    // 이미 페어링된 약 있는지 확인
-    final pairedMed = GlobalMedicineList.medicines
-        .where((m) => m.beaconId == result.device.remoteId.str)
-        .firstOrNull;
-
     return GestureDetector(
       onTap: onTap,
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: isPaired ? Colors.green.shade50 : Colors.white,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: isRecommended ? Colors.green.shade300 : Colors.grey.shade200,
-            width: isRecommended ? 1.5 : 1,
+            color: isPaired
+                ? Colors.green.shade400
+                : isRecommended
+                ? Colors.blue.shade300
+                : Colors.grey.shade200,
+            width: isPaired || isRecommended ? 1.5 : 1,
           ),
           boxShadow: [
             BoxShadow(
@@ -282,7 +285,6 @@ class _BeaconTile extends StatelessWidget {
         ),
         child: Row(
           children: [
-            // 블루투스 아이콘
             Container(
               width: 48,
               height: 48,
@@ -290,8 +292,11 @@ class _BeaconTile extends StatelessWidget {
                 color: _rssiColor(rssi).withOpacity(0.12),
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.bluetooth,
-                  color: _rssiColor(rssi), size: 26),
+              child: Icon(
+                isPaired ? Icons.bluetooth_connected : Icons.bluetooth,
+                color: isPaired ? Colors.green : _rssiColor(rssi),
+                size: 26,
+              ),
             ),
 
             const SizedBox(width: 12),
@@ -302,17 +307,32 @@ class _BeaconTile extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      Text(name,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 15)),
-                      if (isRecommended) ...[
-                        const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(name,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 15)),
+                      ),
+                      const SizedBox(width: 6),
+                      if (isPaired)
                         Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
                             color: Colors.green,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text('연결됨',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold)),
+                        )
+                      else if (isRecommended)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.blue,
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: const Text('추천',
@@ -321,7 +341,6 @@ class _BeaconTile extends StatelessWidget {
                                   fontSize: 10,
                                   fontWeight: FontWeight.bold)),
                         ),
-                      ],
                     ],
                   ),
                   const SizedBox(height: 3),
@@ -330,34 +349,22 @@ class _BeaconTile extends StatelessWidget {
                     style: TextStyle(
                         fontSize: 11, color: Colors.grey.shade400),
                   ),
-                  if (pairedMed != null) ...[
-                    const SizedBox(height: 3),
-                    Text(
-                      '💊 ${pairedMed.name}에 연결됨',
-                      style: const TextStyle(
-                          fontSize: 12, color: Colors.green),
-                    ),
-                  ],
                 ],
               ),
             ),
 
-            // RSSI 신호 세기
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                _SignalBars(bars: _rssiToBars(rssi), color: _rssiColor(rssi)),
+                _SignalBars(
+                    bars: _rssiToBars(rssi), color: _rssiColor(rssi)),
                 const SizedBox(height: 4),
-                Text(
-                  '$rssi dBm',
-                  style: TextStyle(
-                      fontSize: 11, color: Colors.grey.shade500),
-                ),
-                Text(
-                  _rssiLabel(rssi),
-                  style: TextStyle(
-                      fontSize: 11, color: _rssiColor(rssi)),
-                ),
+                Text('$rssi dBm',
+                    style: TextStyle(
+                        fontSize: 11, color: Colors.grey.shade500)),
+                Text(_rssiLabel(rssi),
+                    style: TextStyle(
+                        fontSize: 11, color: _rssiColor(rssi))),
               ],
             ),
           ],
@@ -367,9 +374,9 @@ class _BeaconTile extends StatelessWidget {
   }
 }
 
-// ── 신호 막대 위젯 ────────────────────────────────────────────────────────────
+// ── 신호 막대 ─────────────────────────────────────────────────────────────────
 class _SignalBars extends StatelessWidget {
-  final int bars; // 1~4
+  final int bars;
   final Color color;
   const _SignalBars({required this.bars, required this.color});
 
@@ -379,93 +386,16 @@ class _SignalBars extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: List.generate(4, (i) {
-        final active = i < bars;
         return Container(
           margin: const EdgeInsets.only(left: 2),
           width: 5,
           height: 6.0 + i * 4,
           decoration: BoxDecoration(
-            color: active ? color : Colors.grey.shade200,
+            color: i < bars ? color : Colors.grey.shade200,
             borderRadius: BorderRadius.circular(2),
           ),
         );
       }),
-    );
-  }
-}
-
-// ── 페어링 바텀시트 ──────────────────────────────────────────────────────────
-class _PairingBottomSheet extends StatelessWidget {
-  final ScanResult scanResult;
-  final List<Medicine> medicines;
-  final Function(Medicine) onPaired;
-
-  const _PairingBottomSheet({
-    required this.scanResult,
-    required this.medicines,
-    required this.onPaired,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final deviceName = scanResult.device.platformName.isNotEmpty
-        ? scanResult.device.platformName
-        : scanResult.device.remoteId.str;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
-          Text(
-            '📲 "$deviceName" 을(를)\n어떤 약에 연결할까요?',
-            style: const TextStyle(
-                fontSize: 17, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 16),
-          ...medicines.map((med) => ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.green.shade50,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.medication, color: Colors.green),
-            ),
-            title: Text(med.name,
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: Text(
-              '${med.alarmTime.hour.toString().padLeft(2, '0')}:${med.alarmTime.minute.toString().padLeft(2, '0')}  '
-                  '${med.beaconId.isNotEmpty ? "· 비콘 연결됨" : "· 비콘 없음"}',
-              style: TextStyle(
-                fontSize: 12,
-                color: med.beaconId.isNotEmpty
-                    ? Colors.green
-                    : Colors.grey,
-              ),
-            ),
-            trailing: const Icon(Icons.chevron_right,
-                color: Colors.green),
-            onTap: () {
-              Navigator.pop(context);
-              onPaired(med);
-            },
-          )),
-        ],
-      ),
     );
   }
 }

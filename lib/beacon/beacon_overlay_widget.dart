@@ -1,7 +1,6 @@
-// lib/widgets/beacon_overlay_widget.dart
-import 'dart:math';
+// lib/beacon/beacon_overlay_widget.dart
 import 'package:flutter/material.dart';
-import './beacon_service.dart';
+import 'beacon_service.dart';
 
 /// 홈화면 등 어디서든 삽입 가능한 비콘 상태 위젯
 class BeaconOverlayWidget extends StatelessWidget {
@@ -15,9 +14,9 @@ class BeaconOverlayWidget extends StatelessWidget {
       builder: (context, snapshot) {
         final state = snapshot.data ?? BeaconState.idle;
 
-        // idle 상태는 숨김 (화면 공간 낭비 없이)
+        // idle 상태는 아무것도 표시 안 함
         if (state.phase == BeaconPhase.idle) {
-          return _IdleHint();
+          return const SizedBox.shrink();
         }
 
         if (state.phase == BeaconPhase.verifying) {

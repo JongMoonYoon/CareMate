@@ -1,4 +1,4 @@
-// lib/widgets/beacon_quick_pair_sheet.dart
+// lib/beacon/beacon_quick_pair_sheet.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,30 +6,26 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import '../main.dart';
 
 /// 사용 방법:
-/// BeaconQuickPairSheet.show(context, medicine: medicine);
+/// BeaconQuickPairSheet.showGlobal(context, onPaired: (id) { ... });
 class BeaconQuickPairSheet extends StatefulWidget {
-  final Medicine medicine;
-  final VoidCallback? onPaired;
+  final Function(String beaconId)? onPairedGlobal;
 
   const BeaconQuickPairSheet({
     super.key,
-    required this.medicine,
-    this.onPaired,
+    this.onPairedGlobal,
   });
 
-  /// 외부에서 호출하는 정적 메서드
-  static Future<void> show(
+  /// ⭐ 전역 비콘 연결 (약통 하나)
+  static Future<void> showGlobal(
       BuildContext context, {
-        required Medicine medicine,
-        VoidCallback? onPaired,
+        required Function(String beaconId) onPaired,
       }) {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => BeaconQuickPairSheet(
-        medicine: medicine,
-        onPaired: onPaired,
+        onPairedGlobal: onPaired,
       ),
     );
   }
@@ -145,18 +141,6 @@ class _BeaconQuickPairSheetState extends State<BeaconQuickPairSheet>
     setState(() => _step = _PairStep.pairing);
 
     final beaconId = _candidate!.device.remoteId.str;
-    final idx = GlobalMedicineList.medicines.indexOf(widget.medicine);
-
-    if (idx >= 0) {
-      GlobalMedicineList.medicines[idx] = Medicine(
-        name: widget.medicine.name,
-        alarmTime: widget.medicine.alarmTime,
-        selectedDays: widget.medicine.selectedDays,
-        beaconId: beaconId,
-        isTaken: widget.medicine.isTaken,
-      );
-      await GlobalMedicineList.save();
-    }
 
     await Future.delayed(const Duration(milliseconds: 600));
 
@@ -167,7 +151,7 @@ class _BeaconQuickPairSheetState extends State<BeaconQuickPairSheet>
     await Future.delayed(const Duration(milliseconds: 1500));
     if (mounted) {
       Navigator.pop(context);
-      widget.onPaired?.call();
+      widget.onPairedGlobal?.call(beaconId); // ⭐ beaconId 전달
     }
   }
 
@@ -216,9 +200,9 @@ class _BeaconQuickPairSheetState extends State<BeaconQuickPairSheet>
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: Colors.green.shade200),
             ),
-            child: Text(
-              '💊 ${widget.medicine.name}',
-              style: const TextStyle(
+            child: const Text(
+              '💊 약통 비콘 연결',
+              style: TextStyle(
                 color: Colors.green,
                 fontWeight: FontWeight.bold,
                 fontSize: 14,
