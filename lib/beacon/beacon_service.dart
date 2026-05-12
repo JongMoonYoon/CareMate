@@ -3,24 +3,18 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
-// ────────────────────────────────────────────────────────────────────────────
-// 비콘 3단계 상태
-// ────────────────────────────────────────────────────────────────────────────
 enum BeaconPhase {
-  idle,        // 대기 중 (비콘 미감지)
-  verifying,   // 근접 감지됨 → 2초 유지 검증 중
-  confirmed,   // 복용 확정!
+  idle,
+  verifying,
+  confirmed,
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// 상태 스냅샷 (UI에 전달)
-// ────────────────────────────────────────────────────────────────────────────
 class BeaconState {
   final BeaconPhase phase;
-  final String? detectedBeaconId;   // 감지된 비콘 ID
-  final int rssi;                   // 현재 RSSI
-  final double verifyProgress;      // 0.0 ~ 1.0 (2초 진행률)
-  final String? confirmedMedicineId; // 복용 확정된 약 beaconId
+  final String? detectedBeaconId;
+  final int rssi;
+  final double verifyProgress;
+  final String? confirmedMedicineId;
 
   const BeaconState({
     required this.phase,
@@ -33,45 +27,54 @@ class BeaconState {
   static const idle = BeaconState(phase: BeaconPhase.idle);
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// 비콘 서비스
-// ────────────────────────────────────────────────────────────────────────────
 class BeaconService {
   BeaconService._();
   static final BeaconService instance = BeaconService._();
 
-  // ── 설정 값 ────────────────────────────────────────────────────────────────
-  static const int _rssiThreshold = -45;      // 초밀착 임계값 (dBm)
-  static const int _verifyDurationMs = 2000;  // 검증 시간 2초
-  static const int _rssiSmoothWindow = 1;     // RSSI 평균 계산 샘플 수
-  static const int _scanRestartIntervalMs = 3000; // 스캔 재시작 주기
+  // ── 설정 값 ──────────────────────────────────────────────────────────────
 
-  // ── 내부 상태 ──────────────────────────────────────────────────────────────
+  // [수정 3] 히스테리시스: 진입과 취소 임계값을 분리
+  // 진입: -40 이상일 때만 verifying 시작
+  // 취소: -50 미만으로 떨어질 때만 verifying 취소
+  // → -40~-50 사이에서 신호가 왔다갔다 해도 verifying이 끊기지 않음
+  static const int _rssiEnterThreshold  = -40;  // verifying 진입 기준
+  static const int _rssiCancelThreshold = -50;  // verifying 취소 기준
+
+  static const int _verifyDurationMs     = 2000;
+
+  // [수정 3] 스무딩 샘플 수 1 → 4
+  // 최근 4개 RSSI 값의 평균을 사용 → 순간적인 노이즈에 덜 흔들림
+  // 단점: 처음 감지까지 샘플이 쌓이는 데 약간의 지연이 생길 수 있음
+  static const int _rssiSmoothWindow     = 3;
+
+  // [수정 1] 스캔 타임아웃 > 재시작 간격 → 끊김 없이 항상 스캔 중
+  static const int _scanTimeoutSec       = 10;
+  static const int _scanRestartIntervalMs = 4000;
+
+  // [수정 2] 확정 후 재감지 방지 쿨다운 (30초)
+  static const int _cooldownSec = 30;
+
+  // ── 내부 상태 ────────────────────────────────────────────────────────────
   final _stateController = StreamController<BeaconState>.broadcast();
   Stream<BeaconState> get stateStream => _stateController.stream;
   BeaconState _currentState = BeaconState.idle;
 
-  // BLE 스캔
   StreamSubscription<List<ScanResult>>? _scanSubscription;
   Timer? _scanRestartTimer;
-
-  // 검증 타이머
   Timer? _verifyTimer;
   Timer? _progressTimer;
   DateTime? _verifyStartTime;
 
-  // RSSI 스무딩 (노이즈 제거)
   final Map<String, List<int>> _rssiHistory = {};
-
-  // 감시할 비콘 ID 목록 (등록된 약의 beaconId)
   final Set<String> _watchedBeaconIds = {};
 
-  // 복용 콜백
+  // [수정 2] 쿨다운 종료 시각 (비콘 ID별)
+  final Map<String, DateTime> _cooldownUntil = {};
+
   Function(String beaconId)? onMedicineTaken;
 
-  // ── 시작 / 종료 ────────────────────────────────────────────────────────────
+  // ── 시작 / 종료 ──────────────────────────────────────────────────────────
 
-  /// 서비스 시작. watchedIds = 감시할 beaconId 목록
   Future<void> start({
     required Set<String> watchedIds,
     required Function(String beaconId) onTaken,
@@ -87,7 +90,6 @@ class BeaconService {
       return;
     }
 
-    // BLE 지원 확인
     final isSupported = await FlutterBluePlus.isSupported;
     if (!isSupported) {
       print('❌ 이 기기는 BLE를 지원하지 않습니다.');
@@ -98,7 +100,6 @@ class BeaconService {
     _startScan();
   }
 
-  /// 서비스 중지
   void stop() {
     _scanSubscription?.cancel();
     _scanRestartTimer?.cancel();
@@ -114,23 +115,21 @@ class BeaconService {
     _stateController.close();
   }
 
-  // ── 스캔 관리 ──────────────────────────────────────────────────────────────
+  // ── 스캔 관리 ────────────────────────────────────────────────────────────
 
   void _startScan() {
     _scanSubscription?.cancel();
 
+    // [수정 1] timeout을 10초로 늘려 재시작 간격(4초)보다 항상 길게 유지
+    // → 스캔이 끊기는 구간이 생기지 않음
     FlutterBluePlus.startScan(
-      timeout: const Duration(seconds: 3),
+      timeout: const Duration(seconds: _scanTimeoutSec),
       continuousUpdates: true,
-      androidUsesFineLocation: true, // ← 추가
+      androidUsesFineLocation: true,
     );
 
     _scanSubscription = FlutterBluePlus.scanResults.listen(
-          (results) {
-        // ⭐ 일단 주변에 잡히는 모든 기기 출력해서 비콘이 보이는지 확인
-
-        _onScanResults(results);
-      },
+      _onScanResults,
       onError: (e) => print('❌ 스캔 에러: $e'),
     );
 
@@ -141,25 +140,26 @@ class BeaconService {
     );
   }
 
-  // ── 스캔 결과 처리 ─────────────────────────────────────────────────────────
+  // ── 스캔 결과 처리 ────────────────────────────────────────────────────────
 
   void _onScanResults(List<ScanResult> results) {
-    // 감시 대상 비콘만 필터
     for (final result in results) {
-      final deviceId = result.device.remoteId.str; // MAC or UUID
-
+      final deviceId = result.device.remoteId.str;
       if (!_watchedBeaconIds.contains(deviceId)) continue;
 
-      // RSSI 스무딩 (노이즈 제거)
-      final smoothedRssi = _smoothRssi(deviceId, result.rssi);
+      if (result.rssi >= -40) {
+        _onApproach(deviceId, result.rssi);
+        return;
+      }
 
+      final smoothedRssi = _smoothRssi(deviceId, result.rssi);
       print('📡 비콘[$deviceId] RSSI: ${result.rssi} → 평균: $smoothedRssi');
 
-      if (smoothedRssi >= _rssiThreshold) {
-        // 임계값 이상 → 근접 감지
+      // [수정 3] 히스테리시스: 진입(-40)과 취소(-50) 임계값 분리
+      // -40~-50 사이 구간에서 신호가 출렁여도 verifying 유지됨
+      if (smoothedRssi >= _rssiEnterThreshold) {
         _onApproach(deviceId, smoothedRssi);
-      } else {
-        // 멀어짐 → 검증 취소
+      } else if (smoothedRssi < _rssiCancelThreshold) {
         if (_currentState.detectedBeaconId == deviceId &&
             _currentState.phase == BeaconPhase.verifying) {
           _cancelVerification(reason: '신호 약해짐 ($smoothedRssi dBm)');
@@ -168,20 +168,28 @@ class BeaconService {
     }
   }
 
-  // ── 단계 1: 근접 감지 (Approach) ──────────────────────────────────────────
+  // ── 단계 1: 근접 감지 ────────────────────────────────────────────────────
 
   void _onApproach(String beaconId, int rssi) {
     // 이미 이 비콘 검증 중이면 무시
     if (_currentState.phase == BeaconPhase.verifying &&
         _currentState.detectedBeaconId == beaconId) return;
 
-    // 다른 비콘 검증 중이면 취소 후 새로 시작
+    // 다른 비콘 검증 중이면 취소
     if (_currentState.phase == BeaconPhase.verifying) {
       _cancelVerification(reason: '다른 비콘 감지');
     }
 
-    // confirmed 상태면 짧은 쿨다운 (중복 방지)
+    // confirmed 상태면 무시 (UI에 팝업 떠 있는 중)
     if (_currentState.phase == BeaconPhase.confirmed) return;
+
+    // [수정 2] 쿨다운 중이면 재감지 차단
+    final cooldown = _cooldownUntil[beaconId];
+    if (cooldown != null && DateTime.now().isBefore(cooldown)) {
+      final remaining = cooldown.difference(DateTime.now()).inSeconds;
+      print('⏳ 쿨다운 중 [$beaconId] $remaining초 남음 → 재감지 무시');
+      return;
+    }
 
     print('🟡 [1단계] 근접 감지! 비콘[$beaconId] RSSI: $rssi dBm → 검증 시작');
 
@@ -195,25 +203,24 @@ class BeaconService {
     _startVerificationTimer(beaconId, rssi);
   }
 
-  // ── 단계 2: 의도 검증 (Verification) ─────────────────────────────────────
+  // ── 단계 2: 검증 타이머 ──────────────────────────────────────────────────
 
   void _startVerificationTimer(String beaconId, int rssi) {
     _verifyStartTime = DateTime.now();
     _verifyTimer?.cancel();
     _progressTimer?.cancel();
 
-    // 2초 후 확정
     _verifyTimer = Timer(
       const Duration(milliseconds: _verifyDurationMs),
           () => _onConfirmed(beaconId),
     );
 
-    // 16ms마다 progress 업데이트 (60fps)
     _progressTimer = Timer.periodic(
       const Duration(milliseconds: 16),
           (_) {
         if (_verifyStartTime == null) return;
-        final elapsed = DateTime.now().difference(_verifyStartTime!).inMilliseconds;
+        final elapsed =
+            DateTime.now().difference(_verifyStartTime!).inMilliseconds;
         final progress = (elapsed / _verifyDurationMs).clamp(0.0, 1.0);
 
         _emitState(BeaconState(
@@ -232,12 +239,10 @@ class BeaconService {
     _verifyStartTime = null;
     print('🔴 검증 취소: $reason');
     _emitState(BeaconState.idle);
-
-    // 취소 진동 (짧게 1회)
     HapticFeedback.lightImpact();
   }
 
-  // ── 단계 3: 확정 및 보상 (Confirmation) ───────────────────────────────────
+  // ── 단계 3: 확정 ─────────────────────────────────────────────────────────
 
   Future<void> _onConfirmed(String beaconId) async {
     _verifyTimer?.cancel();
@@ -254,26 +259,26 @@ class BeaconService {
       confirmedMedicineId: beaconId,
     ));
 
-    // ⭐ 햅틱 피드백: 성공 진동 패턴 (강 → 중 → 강)
     await _successHaptic();
-
-    // 콜백 호출 → main.dart에서 복용 기록
     onMedicineTaken?.call(beaconId);
 
-    // 3초 후 idle 복귀 (연속 중복 감지 방지)
+    // [수정 2] 확정 즉시 쿨다운 시작 → idle 복귀 후에도 30초간 재감지 차단
+    _cooldownUntil[beaconId] =
+        DateTime.now().add(const Duration(seconds: _cooldownSec));
+    print('⏳ 쿨다운 시작 [$beaconId] ${_cooldownSec}초');
+
+    // 3초 후 UI만 idle로 복귀 (쿨다운은 계속 유지)
     Timer(const Duration(seconds: 3), () {
       if (_currentState.phase == BeaconPhase.confirmed) {
         _emitState(BeaconState.idle);
-        // RSSI 히스토리 초기화 (쿨다운)
         _rssiHistory.remove(beaconId);
       }
     });
   }
 
-  // ── 햅틱 피드백 ────────────────────────────────────────────────────────────
+  // ── 햅틱 피드백 ──────────────────────────────────────────────────────────
 
   Future<void> _successHaptic() async {
-    // 강 → 0.1초 → 중 → 0.1초 → 강
     await HapticFeedback.heavyImpact();
     await Future.delayed(const Duration(milliseconds: 100));
     await HapticFeedback.mediumImpact();
@@ -281,23 +286,19 @@ class BeaconService {
     await HapticFeedback.heavyImpact();
   }
 
-  // ── RSSI 스무딩 ────────────────────────────────────────────────────────────
+  // ── RSSI 스무딩 ───────────────────────────────────────────────────────────
 
   int _smoothRssi(String deviceId, int rawRssi) {
     final history = _rssiHistory.putIfAbsent(deviceId, () => []);
     history.add(rawRssi);
-    if (history.length > _rssiSmoothWindow) {
-      history.removeAt(0);
-    }
+    if (history.length > _rssiSmoothWindow) history.removeAt(0);
     return (history.reduce((a, b) => a + b) / history.length).round();
   }
 
-  // ── 상태 emit ──────────────────────────────────────────────────────────────
+  // ── 상태 emit ────────────────────────────────────────────────────────────
 
   void _emitState(BeaconState state) {
     _currentState = state;
-    if (!_stateController.isClosed) {
-      _stateController.add(state);
-    }
+    if (!_stateController.isClosed) _stateController.add(state);
   }
 }

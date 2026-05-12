@@ -11,6 +11,7 @@ import 'service/notification_service.dart';
 import 'beacon/beacon_service.dart';
 import 'beacon/beacon_overlay_widget.dart';
 import 'beacon/beacon_quick_pair_sheet.dart';
+import 'beacon/background_beacon_service.dart';
 
 
 const String serverUrl = 'https://ornamented-jeramy-achromatically.ngrok-free.app';
@@ -19,6 +20,7 @@ const String userId = 'user_001';
 void main() async {
   // 1. Flutter 엔진 초기화 및 알람 서비스 시작
   WidgetsFlutterBinding.ensureInitialized();
+  BackgroundBeaconService.initialize();
   await NotificationService.initialize();
 
   // ⭐ 블루투스 권한 요청 (Android 12+ 필수)
@@ -72,58 +74,51 @@ Future<void> _requestBluetoothPermissions() async {
 class GlobalMedicineList {
   static List<Medicine> medicines = [];
   static List<String> history = [];
-
   static int plantLevel = 1;
   static int todayMedicine = 0;
   static int totalMedicine = 0;
-
-  // ⭐ 전역 비콘 ID (약통 하나에 하나의 비콘)
   static String pairedBeaconId = '';
+
+  // OCR 스캔 결과 (챗봇 컨텍스트용)
+  static List<String> lastScannedMedicines = [];
+  static String lastScannedSetName = '';
 
   static Future<void> save() async {
     final prefs = await SharedPreferences.getInstance();
     final jsonList = medicines.map((m) => {
-      'name': m.name,
-      'hour': m.alarmTime.hour,
-      'minute': m.alarmTime.minute,
-      'isTaken': m.isTaken,
-      'selectedDays': m.selectedDays,
+      'name': m.name, 'hour': m.alarmTime.hour, 'minute': m.alarmTime.minute,
+      'isTaken': m.isTaken, 'selectedDays': m.selectedDays,
     }).toList();
-
     await prefs.setString('medicines', jsonEncode(jsonList));
     await prefs.setStringList('medicine_history', history);
     await prefs.setInt('plantLevel', plantLevel);
     await prefs.setInt('todayMedicine', todayMedicine);
     await prefs.setInt('totalMedicine', totalMedicine);
-    await prefs.setString('pairedBeaconId', pairedBeaconId); // ⭐
+    await prefs.setString('pairedBeaconId', pairedBeaconId);
   }
 
   static Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     final jsonStr = prefs.getString('medicines');
-
     if (jsonStr != null) {
       final List<dynamic> jsonList = jsonDecode(jsonStr);
       medicines = jsonList.map((json) => Medicine(
         name: json['name'],
-        alarmTime: TimeOfDay(
-          hour: json['hour'],
-          minute: json['minute'],
-        ),
+        alarmTime: TimeOfDay(hour: json['hour'], minute: json['minute']),
         selectedDays: json['selectedDays'] != null
             ? List<int>.from(json['selectedDays'])
             : [0, 1, 2, 3, 4, 5, 6],
         isTaken: json['isTaken'] ?? false,
       )).toList();
     }
-
     history = prefs.getStringList('medicine_history') ?? [];
     plantLevel = prefs.getInt('plantLevel') ?? 1;
     todayMedicine = prefs.getInt('todayMedicine') ?? 0;
     totalMedicine = prefs.getInt('totalMedicine') ?? 0;
-    pairedBeaconId = prefs.getString('pairedBeaconId') ?? ''; // ⭐
+    pairedBeaconId = prefs.getString('pairedBeaconId') ?? '';
   }
 }
+
 
 class MedicationManager extends ChangeNotifier {
   List<Medicine> _medicines = [];
@@ -216,16 +211,104 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
+  // main.dart 내 _HomeScreenState 클래스 안쪽
+
+  void _showMedicinePopup(String beaconId) {
+    // 이미 팝업이 떠 있는 경우 중복으로 띄우지 않기 위해 체크
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false, // 확인 버튼을 누르기 전까지는 밖을 눌러도 안 닫히게 설정
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Column(
+            children: [
+              Text('💊', style: TextStyle(fontSize: 50)),
+              SizedBox(height: 10),
+              Text('복약 확인', style: TextStyle(fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: const Text(
+            '약통 근처에 계신 것이 감지되었습니다.\n지금 약을 복용하셨나요?',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16),
+          ),
+          actionsAlignment: MainAxisAlignment.spaceEvenly,
+          actions: [
+            // '아니요' 버튼
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text(
+                '아니요',
+                style: TextStyle(color: Colors.grey, fontSize: 18),
+              ),
+            ),
+            // '네, 먹었어요!' 버튼
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context); // 팝업 닫기
+                _onBeaconMedicineTaken(beaconId); // 실제 복약 기록 로직 실행
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text(
+                '네, 먹었어요!',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadMedicines();
     _cleanupOldRecords();
     _startBeaconService(); // ⭐ 비콘 서비스 시작
-    // NotificationService.cancelAllAlarms();
-    // NotificationService.showTestNotification();
+    BackgroundBeaconService.instance.onConfirmed = (beaconId) {
+      if (mounted) {
+        // 1. 진동이나 소리로 알림 극대화
+        HapticFeedback.heavyImpact();
+
+        // 2. 즉시 화면 중앙에 큰 팝업 띄우기
+        _showMedicinePopup(beaconId);
+      }
+    };
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    const testBeaconMac = '48:87:2D:9D:C2:4F';
+
+    if (state == AppLifecycleState.paused) {
+      // 백그라운드: 포그라운드 스캔 중지 → 백그라운드 서비스에 넘김
+      BeaconService.instance.stop();
+      BackgroundBeaconService.instance.start(
+        watchedIds: {testBeaconMac},
+        onTaken: _onBeaconMedicineTaken,
+      );
+    } else if (state == AppLifecycleState.resumed) {
+      // 포그라운드: 백그라운드 서비스 중지 → 포그라운드 스캔 재시작
+      BackgroundBeaconService.instance.stop();
+      BeaconService.instance.start(
+        watchedIds: {testBeaconMac},
+        onTaken: _onBeaconMedicineTaken,
+      );
+    }
   }
 
   // ⭐ 비콘 서비스 시작 (전역 단일 비콘)
@@ -878,6 +961,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     BeaconService.instance.stop(); // ⭐ 비콘 서비스 중지
     super.dispose();
   }
