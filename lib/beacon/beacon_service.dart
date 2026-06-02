@@ -38,20 +38,16 @@ class BeaconService {
   // 취소: -50 미만으로 떨어질 때만 verifying 취소
   // → -40~-50 사이에서 신호가 왔다갔다 해도 verifying이 끊기지 않음
   static const int _rssiEnterThreshold  = -40;  // verifying 진입 기준
-  static const int _rssiCancelThreshold = -50;  // verifying 취소 기준
+  static const int _rssiCancelThreshold = -40;  // verifying 취소 기준
 
   static const int _verifyDurationMs     = 2000;
 
   // [수정 3] 스무딩 샘플 수 1 → 4
   // 최근 4개 RSSI 값의 평균을 사용 → 순간적인 노이즈에 덜 흔들림
   // 단점: 처음 감지까지 샘플이 쌓이는 데 약간의 지연이 생길 수 있음
-  static const int _rssiSmoothWindow     = 3;
+  static const int _rssiSmoothWindow     = 1;  // 스무딩 제거 → 즉시 감지
 
-  // [수정 1] 스캔 타임아웃 > 재시작 간격 → 끊김 없이 항상 스캔 중
-  static const int _scanTimeoutSec       = 10;
-  static const int _scanRestartIntervalMs = 4000;
-
-  // [수정 2] 확정 후 재감지 방지 쿨다운 (30초)
+  // 확정 후 재감지 방지 쿨다운 (30초)
   static const int _cooldownSec = 30;
 
   // ── 내부 상태 ────────────────────────────────────────────────────────────
@@ -102,6 +98,7 @@ class BeaconService {
 
   void stop() {
     _scanSubscription?.cancel();
+    _isScanningSubscription?.cancel();
     _scanRestartTimer?.cancel();
     _verifyTimer?.cancel();
     _progressTimer?.cancel();
@@ -117,27 +114,52 @@ class BeaconService {
 
   // ── 스캔 관리 ────────────────────────────────────────────────────────────
 
+  // isScanning 감시용 subscription
+  StreamSubscription? _isScanningSubscription;
+
+  // Android throttle: 30초 안에 5회 이상 startScan() 호출 시 차단
+  // → 마지막 startScan() 시각을 기록해 최소 12초 간격 강제
+  DateTime? _lastScanStartTime;
+  static const int _minScanIntervalSec = 12;
+
   void _startScan() {
     _scanSubscription?.cancel();
-
-    // [수정 1] timeout을 10초로 늘려 재시작 간격(4초)보다 항상 길게 유지
-    // → 스캔이 끊기는 구간이 생기지 않음
-    FlutterBluePlus.startScan(
-      timeout: const Duration(seconds: _scanTimeoutSec),
-      continuousUpdates: true,
-      androidUsesFineLocation: true,
-    );
+    _isScanningSubscription?.cancel();
+    _scanRestartTimer?.cancel();
 
     _scanSubscription = FlutterBluePlus.scanResults.listen(
       _onScanResults,
       onError: (e) => print('❌ 스캔 에러: $e'),
     );
 
-    _scanRestartTimer?.cancel();
-    _scanRestartTimer = Timer.periodic(
-      const Duration(milliseconds: _scanRestartIntervalMs),
-          (_) => _startScan(),
-    );
+    _isScanningSubscription = FlutterBluePlus.isScanning.listen((isScanning) {
+      if (!isScanning) {
+        final now = DateTime.now();
+        final elapsed = _lastScanStartTime != null
+            ? now.difference(_lastScanStartTime!).inSeconds
+            : _minScanIntervalSec;
+        final wait = elapsed < _minScanIntervalSec
+            ? _minScanIntervalSec - elapsed
+            : 0;
+        if (wait > 0) {
+          print('🔄 스캔 종료 → ${wait}초 후 재시작');
+        }
+        _scanRestartTimer?.cancel();
+        _scanRestartTimer = Timer(Duration(seconds: wait), _doStartScan);
+      }
+    });
+
+    _doStartScan();
+  }
+
+  void _doStartScan() {
+    _lastScanStartTime = DateTime.now();
+    FlutterBluePlus.startScan(
+      continuousUpdates: true,
+      androidUsesFineLocation: true,
+      androidScanMode: AndroidScanMode.lowLatency,
+    ).catchError((e) => print('❌ startScan 에러: $e'));
+    print('🔵 BLE 스캔 시작');
   }
 
   // ── 스캔 결과 처리 ────────────────────────────────────────────────────────
@@ -153,10 +175,7 @@ class BeaconService {
       }
 
       final smoothedRssi = _smoothRssi(deviceId, result.rssi);
-      print('📡 비콘[$deviceId] RSSI: ${result.rssi} → 평균: $smoothedRssi');
 
-      // [수정 3] 히스테리시스: 진입(-40)과 취소(-50) 임계값 분리
-      // -40~-50 사이 구간에서 신호가 출렁여도 verifying 유지됨
       if (smoothedRssi >= _rssiEnterThreshold) {
         _onApproach(deviceId, smoothedRssi);
       } else if (smoothedRssi < _rssiCancelThreshold) {
@@ -262,10 +281,13 @@ class BeaconService {
     await _successHaptic();
     onMedicineTaken?.call(beaconId);
 
-    // [수정 2] 확정 즉시 쿨다운 시작 → idle 복귀 후에도 30초간 재감지 차단
+    // 확정 즉시 쿨다운 시작 → idle 복귀 후에도 30초간 재감지 차단
     _cooldownUntil[beaconId] =
         DateTime.now().add(const Duration(seconds: _cooldownSec));
     print('⏳ 쿨다운 시작 [$beaconId] ${_cooldownSec}초');
+    Timer(const Duration(seconds: _cooldownSec), () {
+      print('✅ 쿨다운 종료 [$beaconId] → 재감지 가능');
+    });
 
     // 3초 후 UI만 idle로 복귀 (쿨다운은 계속 유지)
     Timer(const Duration(seconds: 3), () {

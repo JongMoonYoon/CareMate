@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 
-const String _serverUrl = 'http://172.20.10.2:8000';
+const String _serverUrl = 'http://15.164.230.65:8000';
 
 class OCRService {
   final ImagePicker _imagePicker = ImagePicker();
@@ -100,7 +100,7 @@ class OCRService {
     }
   }
 
-  // ── AI 기반 약품명 추출 (gemma3:1b - 빠름) ───────────────────────────────
+  // ── AI 기반 약품명 추출 + 서버 setName 우선 사용 ─────────────────────────
   Future<Map<String, dynamic>> extractMedicineInfoWithServer(String ocrText) async {
     try {
       final cleanedText = _preprocessText(ocrText);
@@ -114,7 +114,7 @@ class OCRService {
         Uri.parse('$_serverUrl/ocr/extract'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'ocr_text': ocrText}),
-      ).timeout(const Duration(seconds: 60)); // ✅ 60초로 늘림
+      ).timeout(const Duration(seconds: 60));
 
       if (extractResponse.statusCode == 200) {
         final data = jsonDecode(utf8.decode(extractResponse.bodyBytes));
@@ -130,6 +130,7 @@ class OCRService {
           'shape': m['shape'] ?? '',
           'color1': m['color1'] ?? '',
           'db_matched': m['db_matched'] ?? false,
+          'original': m['original'] ?? m['name'] ?? '',
         }).toList();
 
         final categoryTally = <String, int>{};
@@ -140,7 +141,15 @@ class OCRService {
           if (cat != null) categoryTally[cat] = (categoryTally[cat] ?? 0) + 1;
         }
 
-        final setName = _determineSetName(categoryTally, aiNames, verifiedMedicines, bracketCategory);
+        // ✅ 서버 setName 우선 사용, 없거나 기본값이면 클라이언트 계산
+        final serverSetName = data['setName'] as String?;
+        final setName = (serverSetName != null &&
+            serverSetName.isNotEmpty &&
+            serverSetName != '처방약')
+            ? serverSetName
+            : _determineSetName(categoryTally, aiNames, verifiedMedicines, bracketCategory);
+
+        print('최종 setName: $setName (서버: $serverSetName)');
 
         return {
           'setName': setName,
@@ -275,14 +284,12 @@ class OCRService {
       if (RegExp(r'^[\d\s.,/\-]+$').hasMatch(line)) continue;
       if (!RegExp(r'[가-힣a-zA-Z]').hasMatch(line)) continue;
 
-      // ✅ 우선순위 0: "약품명[카테고리]" 패턴 (에이프로젠클래리트로[마크로라이드계 항생제])
       final bracketNamePattern = RegExp(r'^([가-힣a-zA-Z]{4,})\s*\[');
       final bracketNameMatch = bracketNamePattern.firstMatch(line);
       if (bracketNameMatch != null) {
         final name = _cleanMedicineName(bracketNameMatch.group(1)!);
         if (_isValidMedicineName(name) && !names.contains(name)) {
           names.add(name);
-          print('💊 대괄호앞 약품명: $name');
           continue;
         }
       }
@@ -317,21 +324,18 @@ class OCRService {
       }
     }
 
-    // ✅ 전체 텍스트에서 "약품명[카테고리]" 패턴 추가 스캔
     _extractBracketNameFromFullText(ocrText, names);
     _extractStarNamesFromFullText(ocrText, names);
     _extractMgNamesFromFullText(ocrText, names);
     return names;
   }
 
-  // ✅ 전체 텍스트에서 "약품명[...]" 패턴 추출
   void _extractBracketNameFromFullText(String text, List<String> existing) {
     final pattern = RegExp(r'([가-힣a-zA-Z]{4,})\s*\[[가-힣a-zA-Z\s]+\]');
     for (final match in pattern.allMatches(text)) {
       final name = _cleanMedicineName(match.group(1)!);
       if (_isValidMedicineName(name) && !existing.contains(name)) {
         existing.add(name);
-        print('🔍 대괄호앞 전체스캔: $name');
       }
     }
   }

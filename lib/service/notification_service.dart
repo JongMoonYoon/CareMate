@@ -44,8 +44,8 @@ class NotificationService {
           loopAudio: false,
           vibrate: true,
           volumeSettings: const VolumeSettings.fixed(
-            volume: 0.0,
-            volumeEnforced: true,
+            volume: 0.8,          // ✅ 0.0 → 0.8 (소리 켜기)
+            volumeEnforced: false, // ✅ 폰 볼륨 설정 존중
           ),
           notificationSettings: NotificationSettings(
             title: '💊 약 먹을 시간이에요!',
@@ -55,7 +55,7 @@ class NotificationService {
         );
 
         await Alarm.set(alarmSettings: alarmSettings);
-        print('✅ 알람 예약 성공 (ID: $uniqueId)');
+        print('✅ 알람 예약 성공 (ID: $uniqueId, 시간: $scheduledDate)');
       } catch (e) {
         print('❌ 알람 예약 실패: $e');
       }

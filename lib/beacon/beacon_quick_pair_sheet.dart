@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'beacon_service.dart';
 import '../main.dart';
 
 /// 사용 방법:
@@ -74,15 +75,25 @@ class _BeaconQuickPairSheetState extends State<BeaconQuickPairSheet>
     _debounceTimer?.cancel();
     _pulseCtrl.dispose();
     FlutterBluePlus.stopScan();
+    // BeaconService 재시작 (페어링 시 stop했으므로)
+    final id = GlobalMedicineList.pairedBeaconId.trim();
+    if (id.isNotEmpty) {
+      BeaconService.instance.start(watchedIds: {id}, onTaken: (_) {});
+    }
     super.dispose();
   }
 
   // ── BLE 스캔 시작 ─────────────────────────────────────────────────────────
 
-  void _startScan() {
-    FlutterBluePlus.startScan(continuousUpdates: true);
+  Future<void> _startScan() async {
+    // BeaconService 스캔 충돌 방지
+    BeaconService.instance.stop();
+    await FlutterBluePlus.stopScan();
+    await Future.delayed(const Duration(milliseconds: 300));
 
+    _scanSub?.cancel();
     _scanSub = FlutterBluePlus.scanResults.listen((results) {
+      print('📶 페어링 스캔 결과: ${results.length}개');  // ← 이거 추가
       if (_step != _PairStep.scanning) return;
       if (results.isEmpty) return;
 
@@ -108,6 +119,13 @@ class _BeaconQuickPairSheetState extends State<BeaconQuickPairSheet>
         _onCandidateFound(strongest, maxSmoothed);
       }
     });
+
+    // listen 등록 후 스캔 시작 (순서 중요)
+    FlutterBluePlus.startScan(
+      continuousUpdates: true,
+      androidUsesFineLocation: true,
+      androidScanMode: AndroidScanMode.lowLatency,
+    ).catchError((e) => print('❌ 페어링 스캔 에러: \$e'));
   }
 
   // ── 후보 기기 감지됨 ──────────────────────────────────────────────────────

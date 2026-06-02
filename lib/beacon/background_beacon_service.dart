@@ -111,6 +111,8 @@ class _BeaconTaskHandler extends TaskHandler {
     print('🔴 [BG] 종료');
   }
 
+  static const int _minScanIntervalSec = 12;
+
   void _startScan() {
     _scanSub?.cancel();
     _isScanSub?.cancel();
@@ -121,8 +123,13 @@ class _BeaconTaskHandler extends TaskHandler {
       if (!isScanning) {
         final elapsed = _lastScanStart != null
             ? DateTime.now().difference(_lastScanStart!).inSeconds
-            : 15;
-        final wait = elapsed < 15 ? 15 - elapsed : 0;
+            : _minScanIntervalSec;
+        final wait = elapsed < _minScanIntervalSec
+            ? _minScanIntervalSec - elapsed
+            : 0;
+        if (wait > 0) {
+          print('🔄 [BG] 스캔 종료 → ${wait}초 후 재시작');
+        }
         _restartTimer?.cancel();
         _restartTimer = Timer(Duration(seconds: wait), _doStartScan);
       }
@@ -133,11 +140,13 @@ class _BeaconTaskHandler extends TaskHandler {
 
   void _doStartScan() {
     _lastScanStart = DateTime.now();
+
     FlutterBluePlus.startScan(
-      timeout: const Duration(seconds: 10),
       continuousUpdates: true,
       androidUsesFineLocation: true,
+      androidScanMode: AndroidScanMode.lowLatency,
     ).catchError((e) => print('❌ [BG] 스캔 에러: $e'));
+    print('🔵 [BG] BLE 스캔 시작');
   }
 
   void _onResults(List<ScanResult> results) {
@@ -180,11 +189,19 @@ class _BeaconTaskHandler extends TaskHandler {
     _cooldownUntil[id] = DateTime.now().add(const Duration(seconds: _cooldownSec));
     print('✅ [BG] 복용 확정: $id');
 
-    // ① 화면 켜기 + 잠금화면 위 알림 (삼성 알람과 동일한 방식)
-    await _showFullScreenNotification(id);
+    // 앱이 포그라운드 상태인지 확인
+    final isForegrounded = await FlutterForegroundTask.isAppOnForeground;
 
-    // ② 앱이 포그라운드일 때 UI 업데이트용
-    FlutterForegroundTask.sendDataToMain({'event': 'confirmed', 'beaconId': id});
+    if (isForegrounded) {
+      // 포그라운드: 알림 없이 메인 UI에만 전달
+      print('📱 [BG] 포그라운드 상태 → UI 업데이트만');
+      FlutterForegroundTask.sendDataToMain({'event': 'confirmed', 'beaconId': id});
+    } else {
+      // 백그라운드/화면 꺼짐: Full-screen 알림으로 화면 깨우기
+      print('🔔 [BG] 백그라운드 상태 → 알림 발사');
+      await _showFullScreenNotification(id);
+      FlutterForegroundTask.sendDataToMain({'event': 'confirmed', 'beaconId': id});
+    }
   }
 }
 

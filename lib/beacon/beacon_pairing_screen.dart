@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'beacon_service.dart';
 import '../main.dart';
 
 class BeaconPairingScreen extends StatefulWidget {
@@ -26,6 +27,14 @@ class _BeaconPairingScreenState extends State<BeaconPairingScreen> {
   void dispose() {
     _scanSub?.cancel();
     FlutterBluePlus.stopScan();
+    // [수정] 페어링 화면 닫힐 때 BeaconService 스캔 재개
+    final id = GlobalMedicineList.pairedBeaconId.trim();
+    if (id.isNotEmpty) {
+      BeaconService.instance.start(
+        watchedIds: {id},
+        onTaken: (_) {},  // 재시작만 목적 — main에서 콜백 재등록됨
+      );
+    }
     super.dispose();
   }
 
@@ -35,9 +44,17 @@ class _BeaconPairingScreenState extends State<BeaconPairingScreen> {
       _found.clear();
     });
 
-    await FlutterBluePlus.startScan(timeout: const Duration(seconds: 5));
+    // [수정] BeaconService 스캔을 잠시 멈춰 충돌 방지
+    BeaconService.instance.stop();
 
+    await FlutterBluePlus.stopScan();
+    await Future.delayed(const Duration(milliseconds: 300));
+
+    // [수정] listen 먼저 등록 후 startScan 호출
+    // 기존: await startScan() → listen 순서라 결과를 못 받음
+    _scanSub?.cancel();
     _scanSub = FlutterBluePlus.scanResults.listen((results) {
+      if (!mounted) return;
       setState(() {
         for (final r in results) {
           _found[r.device.remoteId.str] = r;
@@ -45,9 +62,14 @@ class _BeaconPairingScreenState extends State<BeaconPairingScreen> {
       });
     });
 
-    Future.delayed(const Duration(seconds: 5), () {
+    FlutterBluePlus.startScan(
+      timeout: const Duration(seconds: 10),
+      androidUsesFineLocation: true,
+      androidScanMode: AndroidScanMode.lowLatency,
+    ).catchError((e) => print('❌ 페어링 스캔 에러: \$e'));
+
+    Future.delayed(const Duration(seconds: 10), () {
       if (mounted) setState(() => _isScanning = false);
-      FlutterBluePlus.stopScan();
     });
   }
 
